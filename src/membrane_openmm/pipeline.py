@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import csv
 import json
 from dataclasses import asdict, dataclass
@@ -18,6 +16,8 @@ from openmm.unit import (
     nanometer,
     picosecond,
 )
+
+from 
 
 from .charmm_gui import LoadedCharmmGuiSystem, load_charmm_gui_system
 

@@ -7,6 +7,7 @@ dependencies = [
   "openmm",
   "numpy",
   "mypy>=1.11",
+  "pydantic==2.12.5",
 ]
 
 [build-system]

@@ -4,35 +4,100 @@ import re
 
 from openmm.app import CharmmParameterSet, CharmmPsfFile, PDBFile
 from openmm.unit import angstrom, degree
+from pydantic import BaseModel, field_validator, model_validator
 
 
-@dataclass(frozen=True)
-class SystemMetadata:
-    boxtype: str
+class CharmmGuiFiles(BaseModel):
+    """Validated set of CHARMM-GUI input file paths. All must exist."""
+
+    model_config = {"frozen": True}
+
+    system_root: Path
+    psf_path: Path
+    pdb_path: Path
+    box_path: Path
+    toppar_str_path: Path
+
+    @classmethod
+    def from_root(cls, system_root: str | Path) -> "CharmmGuiFiles":
+        """Construct from a CHARMM-GUI directory, resolving canonical file names."""
+        root = Path(system_root).expanduser().resolve()
+        return cls(
+            system_root=root,
+            psf_path=root / "step5_assembly.psf",
+            pdb_path=root / "step5_assembly.pdb",
+            box_path=root / "step5_assembly.str",
+            toppar_str_path=root / "toppar.str",
+        )
+
+    @field_validator("system_root")
+    @classmethod
+    def _root_must_be_dir(cls, v: Path) -> Path:
+        v = v.expanduser().resolve()
+        if not v.is_dir():
+            raise ValueError(f"system_root is not a directory: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _all_files_must_exist(self) -> "CharmmGuiFiles":
+        missing = []
+        for field_name in ("psf_path", "pdb_path", "box_path", "toppar_str_path"):
+            p = getattr(self, field_name)
+            if not p.exists():
+                missing.append(p)
+        if missing:
+            joined = "\n".join(f"  - {p}" for p in missing)
+            raise ValueError(
+                f"Missing required CHARMM-GUI files:\n{joined}"
+            )
+        return self
+
+
+class SystemMetadata(BaseModel):
+    """Box and composition metadata parsed from step5_assembly.str."""
+
+    model_config = {"frozen": True}
+
+    boxtype: str = "RECT"
     a: float
     b: float
     c: float
-    alpha: float
-    beta: float
-    gamma: float
-    zcen: float
+    alpha: float = 90.0
+    beta: float = 90.0
+    gamma: float = 90.0
+    zcen: float = 0.0
     nliptop: int
     nlipbot: int
     nwater: int
     niontot: int
+
+    @field_validator("a", "b", "c")
+    @classmethod
+    def _box_dims_positive(cls, v: float, info) -> float:
+        if v <= 0:
+            raise ValueError(f"Box dimension '{info.field_name}' must be positive, got {v}")
+        return v
+
+    @field_validator("alpha", "beta", "gamma")
+    @classmethod
+    def _angles_in_range(cls, v: float, info) -> float:
+        if not (0.0 < v < 180.0):
+            raise ValueError(f"Angle '{info.field_name}' must be in (0, 180), got {v}")
+        return v
+
+    @field_validator("nliptop", "nlipbot")
+    @classmethod
+    def _lipid_counts_non_negative(cls, v: int, info) -> int:
+        if v < 0:
+            raise ValueError(f"'{info.field_name}' must be >= 0, got {v}")
+        return v
 
     @property
     def total_lipids(self) -> int:
         return self.nliptop + self.nlipbot
 
 
-@dataclass(frozen=True)
-class LoadedCharmmGuiSystem:
-    system_root: Path
-    psf: CharmmPsfFile
-    pdb: PDBFile
-    params: CharmmParameterSet
-    metadata: SystemMetadata
+
 
 
 def _read_text(path: Path) -> str:
@@ -100,26 +165,16 @@ def parse_toppar_stream(toppar_str: Path) -> list[str]:
     return files
 
 
-def load_charmm_gui_system(system_root: str | Path) -> LoadedCharmmGuiSystem:
-    root = Path(system_root).expanduser().resolve()
+def load_charmm_gui_system(files: CharmmGuiFiles) -> LoadedCharmmGuiSystem:
+    """Load a CHARMM-GUI system. Expects a pre-validated CharmmGuiFiles object."""
+    metadata = parse_step5_assembly_str(files.box_path)
 
-    # TODO: Would be nice that Pydantic validates these files before anything else
-    psf_path = root / "step5_assembly.psf"
-    pdb_path = root / "step5_assembly.pdb"
-    box_path = root / "step5_assembly.str"
-    toppar_str = root / "toppar.str"
-
-    # TODO: Instead of having this here pointed as missing files
-    missing = [p for p in [psf_path, pdb_path, box_path, toppar_str] if not p.exists()]
-    if missing:
-        joined = "\n".join(f"  - {p}" for p in missing)
-        raise FileNotFoundError(f"Missing required CHARMM-GUI files:\n{joined}")
-
-    metadata = parse_step5_assembly_str(box_path)
-
-    param_paths = [str((root / rel_path).resolve()) for rel_path in parse_toppar_stream(toppar_str)]
+    param_paths = [
+        str((files.system_root / rel_path).resolve())
+        for rel_path in parse_toppar_stream(files.toppar_str_path)
+    ]
     params = CharmmParameterSet(*param_paths)
-    psf = CharmmPsfFile(str(psf_path))
+    psf = CharmmPsfFile(str(files.psf_path))
     psf.setBox(
         metadata.a * angstrom,
         metadata.b * angstrom,
@@ -128,10 +183,10 @@ def load_charmm_gui_system(system_root: str | Path) -> LoadedCharmmGuiSystem:
         metadata.beta * degree,
         metadata.gamma * degree,
     )
-    pdb = PDBFile(str(pdb_path))
+    pdb = PDBFile(str(files.pdb_path))
 
     return LoadedCharmmGuiSystem(
-        system_root=root,
+        system_root=files.system_root,
         psf=psf,
         pdb=pdb,
         params=params,

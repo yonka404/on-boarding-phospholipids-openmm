@@ -1,0 +1,20 @@
+[project]
+name = "membrane-openmm"
+version = "0.1.0"
+description = "Python/OpenMM scaffold for CHARMM-GUI membrane size-effect runs"
+requires-python = ">=3.11"
+dependencies = [
+  "openmm",
+  "numpy",
+  "mypy>=1.11",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -39,7 +39,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     run_case(
-        system_root=Path(args.system_root),
         outdir=Path(args.outdir),
         temperature_k=args.temperature,
         platform_name=args.platform,

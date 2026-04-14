@@ -7,51 +7,6 @@ from openmm.unit import angstrom, degree
 from pydantic import BaseModel, field_validator, model_validator
 
 
-class CharmmGuiFiles(BaseModel):
-    """Validated set of CHARMM-GUI input file paths. All must exist."""
-
-    model_config = {"frozen": True}
-
-    system_root: Path
-    psf_path: Path
-    pdb_path: Path
-    box_path: Path
-    toppar_str_path: Path
-
-    @classmethod
-    def from_root(cls, system_root: str | Path) -> "CharmmGuiFiles":
-        """Construct from a CHARMM-GUI directory, resolving canonical file names."""
-        root = Path(system_root).expanduser().resolve()
-        return cls(
-            system_root=root,
-            psf_path=root / "step5_assembly.psf",
-            pdb_path=root / "step5_assembly.pdb",
-            box_path=root / "step5_assembly.str",
-            toppar_str_path=root / "toppar.str",
-        )
-
-    @field_validator("system_root")
-    @classmethod
-    def _root_must_be_dir(cls, v: Path) -> Path:
-        v = v.expanduser().resolve()
-        if not v.is_dir():
-            raise ValueError(f"system_root is not a directory: {v}")
-        return v
-
-    @model_validator(mode="after")
-    def _all_files_must_exist(self) -> "CharmmGuiFiles":
-        missing = []
-
-        for field_name in ("psf_path", "pdb_path", "box_path", "toppar_str_path"):
-            p = getattr(self, field_name)
-            if not p.exists():
-                missing.append(p)
-        if missing:
-            joined = "\n".join(f"  - {p}" for p in missing)
-            raise ValueError(f"Missing required CHARMM-GUI files:\n{joined}")
-        return self
-
-
 class SystemMetadata(BaseModel):
     """Box and composition metadata parsed from step5_assembly.str."""
 
@@ -98,6 +53,51 @@ class SystemMetadata(BaseModel):
         return self.nliptop + self.nlipbot
 
 
+class CharmmGuiFiles(BaseModel):
+    """Validated set of CHARMM-GUI input file paths. All must exist."""
+
+    model_config = {"frozen": True}
+
+    inputs_root: Path
+    psf_path: Path
+    pdb_path: Path
+    box_path: Path
+    toppar_str_path: Path
+
+    @classmethod
+    def from_root(cls, system_root: str | Path) -> "CharmmGuiFiles":
+        """Construct from a CHARMM-GUI directory, resolving canonical file names."""
+        root = Path(system_root).expanduser().resolve()
+        return cls(
+            inputs_root=root,
+            psf_path=root / "step5_assembly.psf",
+            pdb_path=root / "step5_assembly.pdb",
+            box_path=root / "step5_assembly.str",
+            toppar_str_path=root / "toppar.str",
+        )
+
+    @field_validator("system_root")
+    @classmethod
+    def _root_must_be_dir(cls, v: Path) -> Path:
+        v = v.expanduser().resolve()
+        if not v.is_dir():
+            raise ValueError(f"system_root is not a directory: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _all_files_must_exist(self) -> "CharmmGuiFiles":
+        missing = []
+
+        for field_name in ("psf_path", "pdb_path", "box_path", "toppar_str_path"):
+            p = getattr(self, field_name)
+            if not p.exists():
+                missing.append(p)
+        if missing:
+            joined = "\n".join(f"  - {p}" for p in missing)
+            raise ValueError(f"Missing required CHARMM-GUI files:\n{joined}")
+        return self
+
+
 @dataclass(frozen=True)
 class LoadedCharmmGuiSystem:
     system_root: Path
@@ -107,11 +107,7 @@ class LoadedCharmmGuiSystem:
     metadata: SystemMetadata
 
 
-# --------------------------------------------------------------
-# --------------------------------------------------------------
-
-
-class CharmGuiSystem(BaseModel):
+class CharmmGuiSystem(BaseModel):
     """CHARMM-GUI system representation, with validation and loading logic."""
 
     model_config = {"frozen": True}
@@ -149,6 +145,7 @@ class CharmGuiSystem(BaseModel):
         )
 
     def _parse_step_assembly_file(self) -> SystemMetadata:
+
         text = _read_text(self.files.box_path)
         values: dict[str, str] = {}
         for line in text.splitlines():

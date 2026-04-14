@@ -1,23 +1,18 @@
-import csv
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
-from openmm import LangevinMiddleIntegrator, MonteCarloMembraneBarostat, Platform
-from openmm.app import PME, DCDReporter, HBonds, PDBFile, Simulation
+from openmm import Platform
+from openmm.app import DCDReporter
 from openmm.unit import (
     MOLAR_GAS_CONSTANT_R,
-    bar,
-    femtoseconds,
     kelvin,
     kilojoule_per_mole,
     nanometer,
-    picosecond,
 )
 
-from .charmm_gui import LoadedCharmmGuiSystem, load_charmm_gui_system
+from membrane_openmm.charmm_gui import CharmmGuiFiles, CharmmGuiSystem
 
 
 @dataclass(frozen=True)
@@ -30,7 +25,13 @@ class Stage:
 
 
 DEFAULT_STAGES: tuple[Stage, ...] = (
-    Stage(name="eq1", steps=125_000, dt_fs=1.0, use_membrane_barostat=False, minimize_first=True),
+    Stage(
+        name="eq1",
+        steps=125_000,
+        dt_fs=1.0,
+        use_membrane_barostat=False,
+        minimize_first=True,
+    ),
     Stage(name="eq2", steps=125_000, dt_fs=1.0, use_membrane_barostat=False),
     Stage(name="eq3", steps=125_000, dt_fs=1.0, use_membrane_barostat=True),
     Stage(name="eq4", steps=250_000, dt_fs=2.0, use_membrane_barostat=True),
@@ -49,7 +50,12 @@ def _pick_platform(name: str | None) -> Platform | None:
 def _compute_degrees_of_freedom(system) -> int:
     dof = 0
     for idx in range(system.getNumParticles()):
-        if system.getParticleMass(idx).value_in_unit_system(system.getParticleMass(idx).unit.system) != 0:
+        if (
+            system.getParticleMass(idx).value_in_unit_system(
+                system.getParticleMass(idx).unit.system
+            )
+            != 0
+        ):
             dof += 3
     dof -= system.getNumConstraints()
     # subtract COM remover if present
@@ -76,71 +82,75 @@ def _volume_nm3(lx: float, ly: float, lz: float) -> float:
     return lx * ly * lz
 
 
-def _build_simulation(
-    loaded: LoadedCharmmGuiSystem,
-    temperature_k: float,
-    stage: Stage,
-    platform_name: str | None,
-) -> Simulation:
-    system = loaded.psf.createSystem(
-        loaded.params,
-        nonbondedMethod=PME,
-        nonbondedCutoff=1.2 * nanometer,
-        switchDistance=1.0 * nanometer,
-        constraints=HBonds,
-    )
-
-    if stage.use_membrane_barostat:
-        system.addForce(
-            MonteCarloMembraneBarostat(
-                1.0 * bar,
-                0.0 * bar * nanometer,
-                MonteCarloMembraneBarostat.XYIsotropic,
-                MonteCarloMembraneBarostat.ZFree,
-                temperature_k * kelvin,
-            )
-        )
-
-    integrator = LangevinMiddleIntegrator(
-        temperature_k * kelvin,
-        1.0 / picosecond,
-        stage.dt_fs * femtoseconds,
-    )
-
-    platform = _pick_platform(platform_name)
-    if platform is None:
-        sim = Simulation(loaded.psf.topology, system, integrator)
-    else:
-        sim = Simulation(loaded.psf.topology, system, integrator, platform)
-    return sim
-
-
-def _write_metadata(outdir: Path, loaded: LoadedCharmmGuiSystem, temperature_k: float) -> None:
-    payload = {
-        "system_root": str(loaded.system_root),
-        "temperature_k": temperature_k,
-        "metadata": asdict(loaded.metadata),
-    }
-    (outdir / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def _append_csv_row(csv_path: Path, row: dict[str, float | int | str]) -> None:
-    write_header = not csv_path.exists()
-    with csv_path.open("a", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
-
-def _save_final_pdb(simulation: Simulation, outpath: Path) -> None:
-    state = simulation.context.getState(getPositions=True)
-    with outpath.open("w", encoding="utf-8") as fh:
-        PDBFile.writeFile(simulation.topology, state.getPositions(), fh)
+#
+# def _build_simulation(
+#     loaded: LoadedCharmmGuiSystem,
+#     temperature_k: float,
+#     stage: Stage,
+#     platform_name: str | None,
+# ) -> Simulation:
+#     system = loaded.psf.createSystem(
+#         loaded.params,
+#         nonbondedMethod=PME,
+#         nonbondedCutoff=1.2 * nanometer,
+#         switchDistance=1.0 * nanometer,
+#         constraints=HBonds,
+#     )
+#
+#     if stage.use_membrane_barostat:
+#         system.addForce(
+#             MonteCarloMembraneBarostat(
+#                 1.0 * bar,
+#                 0.0 * bar * nanometer,
+#                 MonteCarloMembraneBarostat.XYIsotropic,
+#                 MonteCarloMembraneBarostat.ZFree,
+#                 temperature_k * kelvin,
+#             )
+#         )
+#
+#     integrator = LangevinMiddleIntegrator(
+#         temperature_k * kelvin,
+#         1.0 / picosecond,
+#         stage.dt_fs * femtoseconds,
+#     )
+#
+#     platform = _pick_platform(platform_name)
+#     if platform is None:
+#         sim = Simulation(loaded.psf.topology, system, integrator)
+#     else:
+#         sim = Simulation(loaded.psf.topology, system, integrator, platform)
+#     return sim
+#
+#
+# def _write_metadata(
+#     outdir: Path, loaded: LoadedCharmmGuiSystem, temperature_k: float
+# ) -> None:
+#     payload = {
+#         "system_root": str(loaded.system_root),
+#         "temperature_k": temperature_k,
+#         "metadata": asdict(loaded.metadata),
+#     }
+#     (outdir / "metadata.json").write_text(
+#         json.dumps(payload, indent=2), encoding="utf-8"
+#     )
+#
+#
+# def _append_csv_row(csv_path: Path, row: dict[str, float | int | str]) -> None:
+#     write_header = not csv_path.exists()
+#     with csv_path.open("a", newline="", encoding="utf-8") as fh:
+#         writer = csv.DictWriter(fh, fieldnames=list(row.keys()))
+#         if write_header:
+#             writer.writeheader()
+#         writer.writerow(row)
+#
+#
+# def _save_final_pdb(simulation: Simulation, outpath: Path) -> None:
+#     state = simulation.context.getState(getPositions=True)
+#     with outpath.open("w", encoding="utf-8") as fh:
+#         PDBFile.writeFile(simulation.topology, state.getPositions(), fh)
 
 
 def run_case(
-    system_root: str | Path,
     outdir: str | Path,
     temperature_k: float = 303.15,
     platform_name: str | None = None,
@@ -149,10 +159,20 @@ def run_case(
     checkpoint_interval: int = 50_000,
     continue_from_existing: bool = True,
 ) -> None:
+
     outdir = Path(outdir).expanduser().resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    loaded = load_charmm_gui_system(system_root)
+    files = CharmmGuiFiles(
+        inputs_root=Path("inputs/n100/charmm-gui"),
+        psf_path=Path("inputs/n100/charmm-gui/step5_assembly.psf"),
+        pdb_path=Path("inputs/n100/charmm-gui/step5_assembly.pdb"),
+        box_path=Path("inputs/n100/charmm-gui/step5_assembly.str"),
+        toppar_str_path=Path("inputs/n100/charmm-gui/toppar.str"),
+    )
+    system = CharmmGuiSystem(files=files)
+    loaded = system.load()
+
     _write_metadata(outdir, loaded, temperature_k)
 
     previous_state_xml: Path | None = None
@@ -171,7 +191,9 @@ def run_case(
             print(f"[skip] {stage.name} already finished -> {state_xml}")
             continue
 
-        print(f"[run] {stage.name}: steps={stage.steps}, dt_fs={stage.dt_fs}, membrane_barostat={stage.use_membrane_barostat}")
+        print(
+            f"[run] {stage.name}: steps={stage.steps}, dt_fs={stage.dt_fs}, membrane_barostat={stage.use_membrane_barostat}"
+        )
         simulation = _build_simulation(loaded, temperature_k, stage, platform_name)
         dof = _compute_degrees_of_freedom(simulation.system)
 
@@ -194,11 +216,17 @@ def run_case(
             time_ps = step_now * stage.dt_fs / 1000.0
             ke = state.getKineticEnergy().value_in_unit(kilojoule_per_mole)
             pe = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
-            temperature = (2.0 * state.getKineticEnergy() / (dof * MOLAR_GAS_CONSTANT_R)).value_in_unit(kelvin)
+            temperature = (
+                2.0 * state.getKineticEnergy() / (dof * MOLAR_GAS_CONSTANT_R)
+            ).value_in_unit(kelvin)
             lx, ly, lz = _box_vectors_to_lengths_nm(state)
             volume_nm3 = _volume_nm3(lx, ly, lz)
             area_xy_nm2 = lx * ly
-            area_per_lipid_nm2 = area_xy_nm2 / loaded.metadata.nliptop if loaded.metadata.nliptop else float("nan")
+            area_per_lipid_nm2 = (
+                area_xy_nm2 / loaded.metadata.nliptop
+                if loaded.metadata.nliptop
+                else float("nan")
+            )
 
             row = {
                 "stage": stage.name,

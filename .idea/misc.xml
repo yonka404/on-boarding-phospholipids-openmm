@@ -4,4 +4,7 @@
     <option name="sdkName" value="uv (on-boarding-phospholipids-openmm)" />
   </component>
   <component name="ProjectRootManager" version="2" project-jdk-name="uv (on-boarding-phospholipids-openmm)" project-jdk-type="Python SDK" />
+  <component name="RuffConfiguration">
+    <option name="enabled" value="true" />
+  </component>
 </project>

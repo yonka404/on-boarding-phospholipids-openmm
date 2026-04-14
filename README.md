@@ -45,7 +45,9 @@ membrane-openmm/
 
 ## Important limitation
 
-This scaffold mirrors the **idea** of your NAMD workflow (staged equilibration followed by production), but it does **not** attempt a byte-for-byte port of CHARMM-GUI's NAMD-specific colvars/extra-bond restraint files. For the course exercise this is usually fine, because the goal is to compare size trends consistently across systems.
+This scaffold mirrors the **idea** of your NAMD workflow (staged equilibration followed by production), but it does *
+*not** attempt a byte-for-byte port of CHARMM-GUI's NAMD-specific colvars/extra-bond restraint files. For the course
+exercise this is usually fine, because the goal is to compare size trends consistently across systems.
 
 ## Install
 
@@ -76,7 +78,7 @@ Each `charmm-gui/` folder should contain at least:
 
 ```bash
 python mains/run_case.py \
-  --system-root systems/n100/charmm-gui \
+  --inputs-root inputs/n100 \
   --outdir results/n100 \
   --platform CPU \
   --temperature 303.15
@@ -88,7 +90,7 @@ If you have a supported GPU, replace `CPU` with `HIP`, `CUDA`, or `OpenCL`.
 
 ```bash
 python mains/run_sweep.py \
-  --systems systems/n50/charmm-gui systems/n100/charmm-gui systems/n150/charmm-gui \
+  --inputs inputs/n50/charmm-gui inputs/n100/charmm-gui inputs/n150/charmm-gui \
   --results-root results \
   --platform CPU \
   --temperature 303.15

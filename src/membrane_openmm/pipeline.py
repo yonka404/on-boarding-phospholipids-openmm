@@ -6,7 +6,7 @@ from typing import Iterable
 
 import numpy as np
 from openmm import LangevinMiddleIntegrator, MonteCarloMembraneBarostat, Platform
-from openmm.app import DCDReporter, HBonds, PME, PDBFile, Simulation
+from openmm.app import PME, DCDReporter, HBonds, PDBFile, Simulation
 from openmm.unit import (
     MOLAR_GAS_CONSTANT_R,
     bar,
@@ -16,8 +16,6 @@ from openmm.unit import (
     nanometer,
     picosecond,
 )
-
-from 
 
 from .charmm_gui import LoadedCharmmGuiSystem, load_charmm_gui_system
 

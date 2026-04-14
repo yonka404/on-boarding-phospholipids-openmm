@@ -14,13 +14,33 @@ def infer_case_name(system_root: Path) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a size sweep across multiple CHARMM-GUI systems")
-    parser.add_argument("--systems", nargs="+", required=True, help="List of CHARMM-GUI system folders")
-    parser.add_argument("--results-root", required=True, help="Root folder for output runs")
-    parser.add_argument("--temperature", type=float, default=303.15, help="Simulation temperature in K")
-    parser.add_argument("--platform", default=None, help="OpenMM platform: CPU, CUDA, HIP, OpenCL")
-    parser.add_argument("--report-interval", type=int, default=5000, help="CSV/DCD report interval in steps")
-    parser.add_argument("--checkpoint-interval", type=int, default=50000, help="Checkpoint interval in steps")
+    parser = argparse.ArgumentParser(
+        description="Run a size sweep across multiple CHARMM-GUI inputs"
+    )
+    parser.add_argument(
+        "--inputs", nargs="+", required=True, help="List of CHARMM-GUI system folders"
+    )
+    parser.add_argument(
+        "--results-root", required=True, help="Root folder for output runs"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=303.15, help="Simulation temperature in K"
+    )
+    parser.add_argument(
+        "--platform", default=None, help="OpenMM platform: CPU, CUDA, HIP, OpenCL"
+    )
+    parser.add_argument(
+        "--report-interval",
+        type=int,
+        default=5000,
+        help="CSV/DCD report interval in steps",
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=50000,
+        help="Checkpoint interval in steps",
+    )
     args = parser.parse_args()
 
     results_root = Path(args.results_root).expanduser().resolve()

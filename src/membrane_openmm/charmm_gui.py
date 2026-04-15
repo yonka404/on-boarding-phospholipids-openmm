@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 from openmm.app import CharmmParameterSet, CharmmPsfFile, PDBFile
 from openmm.unit import angstrom, degree
@@ -54,48 +55,56 @@ class SystemMetadata(BaseModel):
 
 
 class CharmmGuiFiles(BaseModel):
-    """Validated set of CHARMM-GUI input file paths. All must exist."""
+    """Validated CHARMM-GUI input directory with canonical file accessors."""
 
     model_config = {"frozen": True}
 
+    REQUIRED_FILES: ClassVar[tuple[str, ...]] = (
+        "step5_assembly.psf",
+        "step5_assembly.pdb",
+        "step5_assembly.str",
+        "toppar.str",
+    )
+
     inputs_root: Path
-    psf_path: Path
-    pdb_path: Path
-    box_path: Path
-    toppar_str_path: Path
 
     @classmethod
-    def from_root(cls, system_root: str | Path) -> "CharmmGuiFiles":
-        """Construct from a CHARMM-GUI directory, resolving canonical file names."""
-        root = Path(system_root).expanduser().resolve()
-        return cls(
-            inputs_root=root,
-            psf_path=root / "step5_assembly.psf",
-            pdb_path=root / "step5_assembly.pdb",
-            box_path=root / "step5_assembly.str",
-            toppar_str_path=root / "toppar.str",
-        )
+    def from_root(cls, inputs_root: Path) -> "CharmmGuiFiles":
+        """Construct from a CHARMM-GUI directory."""
+        return cls(inputs_root=Path(inputs_root))
 
-    @field_validator("system_root")
+    @field_validator("inputs_root", mode="after")
     @classmethod
-    def _root_must_be_dir(cls, v: Path) -> Path:
-        v = v.expanduser().resolve()
-        if not v.is_dir():
-            raise ValueError(f"system_root is not a directory: {v}")
-        return v
+    def _validate_inputs_root(cls, v: Path) -> Path:
+        root = v.expanduser().resolve()
 
-    @model_validator(mode="after")
-    def _all_files_must_exist(self) -> "CharmmGuiFiles":
-        missing = []
+        if not root.is_dir():
+            raise ValueError(f"inputs_root is not a directory: {root}")
 
-        for field_name in ("psf_path", "pdb_path", "box_path", "toppar_str_path"):
-            p = getattr(self, field_name)
-            if not p.exists():
-                missing.append(p)
+        missing = [
+            root / name for name in cls.REQUIRED_FILES if not (root / name).is_file()
+        ]
         if missing:
             joined = "\n".join(f"  - {p}" for p in missing)
             raise ValueError(f"Missing required CHARMM-GUI files:\n{joined}")
-        return self
+
+        return root
+
+    @property
+    def psf_path(self) -> Path:
+        return self.inputs_root / "step5_assembly.psf"
+
+    @property
+    def pdb_path(self) -> Path:
+        return self.inputs_root / "step5_assembly.pdb"
+
+    @property
+    def box_path(self) -> Path:
+        return self.inputs_root / "step5_assembly.str"
+
+    @property
+    def toppar_str_path(self) -> Path:
+        return self.inputs_root / "toppar.str"
 
 
 @dataclass(frozen=True)
@@ -137,7 +146,7 @@ class CharmmGuiSystem(BaseModel):
         pdb = PDBFile(str(files.pdb_path))
 
         return LoadedCharmmGuiSystem(
-            system_root=files.system_root,
+            inputs_root=files.inputs_root,
             psf=psf,
             pdb=pdb,
             params=params,

@@ -1,57 +1,10 @@
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
 from openmm.app import CharmmParameterSet, CharmmPsfFile, PDBFile
 from openmm.unit import angstrom, degree
-from pydantic import BaseModel, field_validator, model_validator
-
-
-class SystemMetadata(BaseModel):
-    """Box and composition metadata parsed from step5_assembly.str."""
-
-    model_config = {"frozen": True}
-
-    boxtype: str = "RECT"
-    a: float
-    b: float
-    c: float
-    alpha: float = 90.0
-    beta: float = 90.0
-    gamma: float = 90.0
-    zcen: float = 0.0
-    nliptop: int
-    nlipbot: int
-    nwater: int
-    niontot: int
-
-    @field_validator("a", "b", "c")
-    @classmethod
-    def _box_dims_positive(cls, v: float, info) -> float:
-        if v <= 0:
-            raise ValueError(
-                f"Box dimension '{info.field_name}' must be positive, got {v}"
-            )
-        return v
-
-    @field_validator("alpha", "beta", "gamma")
-    @classmethod
-    def _angles_in_range(cls, v: float, info) -> float:
-        if not (0.0 < v < 180.0):
-            raise ValueError(f"Angle '{info.field_name}' must be in (0, 180), got {v}")
-        return v
-
-    @field_validator("nliptop", "nlipbot")
-    @classmethod
-    def _lipid_counts_non_negative(cls, v: int, info) -> int:
-        if v < 0:
-            raise ValueError(f"'{info.field_name}' must be >= 0, got {v}")
-        return v
-
-    @property
-    def total_lipids(self) -> int:
-        return self.nliptop + self.nlipbot
+from pydantic import BaseModel, field_validator
 
 
 class CharmmGuiFiles(BaseModel):
@@ -107,56 +60,108 @@ class CharmmGuiFiles(BaseModel):
         return self.inputs_root / "toppar.str"
 
 
-@dataclass(frozen=True)
-class LoadedCharmmGuiSystem:
-    system_root: Path
-    psf: CharmmPsfFile
-    pdb: PDBFile
-    params: CharmmParameterSet
-    metadata: SystemMetadata
-
-
 class CharmmGuiSystem(BaseModel):
-    """CHARMM-GUI system representation, with validation and loading logic."""
+    """Validated CHARMM-GUI system with metadata parsed from input files (CharmmGuiFiles)."""
 
     model_config = {"frozen": True}
 
     files: CharmmGuiFiles
 
-    def load(self) -> LoadedCharmmGuiSystem:
-        """Load a CHARMM-GUI system. Expects a pre-validated CharmmGuiFiles object."""
+    boxtype: str = "RECT"
+    a: float
+    b: float
+    c: float
+    alpha: float = 90.0
+    beta: float = 90.0
+    gamma: float = 90.0
+    zcen: float = 0.0
+    nliptop: int
+    nlipbot: int
+    nwater: int
+    niontot: int
 
-        metadata = self._parse_step_assembly_file()
+    @classmethod
+    def from_root(cls, inputs_root: Path) -> "CharmmGuiSystem":
+        files = CharmmGuiFiles.from_root(inputs_root)
+        return cls.from_files(files)
 
+    @classmethod
+    def from_files(cls, files: CharmmGuiFiles) -> "CharmmGuiSystem":
+        values = cls._parse_step_assembly_file(files.box_path)
+        return cls(files=files, **values)
+
+    @field_validator("boxtype")
+    @classmethod
+    def _normalize_boxtype(cls, v: str) -> str:
+        value = v.strip().upper()
+        if not value:
+            raise ValueError("boxtype must not be empty")
+        return value
+
+    @field_validator("a", "b", "c")
+    @classmethod
+    def _box_dims_positive(cls, v: float, info) -> float:
+        if v <= 0:
+            raise ValueError(
+                f"Box dimension '{info.field_name}' must be positive, got {v}"
+            )
+        return v
+
+    @field_validator("alpha", "beta", "gamma")
+    @classmethod
+    def _angles_in_range(cls, v: float, info) -> float:
+        if not (0.0 < v < 180.0):
+            raise ValueError(f"Angle '{info.field_name}' must be in (0, 180), got {v}")
+        return v
+
+    @field_validator("nliptop", "nlipbot", "nwater", "niontot")
+    @classmethod
+    def _counts_non_negative(cls, v: int, info) -> int:
+        if v < 0:
+            raise ValueError(f"'{info.field_name}' must be >= 0, got {v}")
+        return v
+
+    @property
+    def total_lipids(self) -> int:
+        return self.nliptop + self.nlipbot
+
+    def load_params(self) -> CharmmParameterSet:
         param_paths = [
-            str((self.files.system_root / rel_path).resolve())
+            str((self.files.inputs_root / rel_path).resolve())
             for rel_path in _parse_toppar_stream(self.files.toppar_str_path)
         ]
+        return CharmmParameterSet(*param_paths)
 
-        params = CharmmParameterSet(*param_paths)
-        psf = CharmmPsfFile(str(files.psf_path))
+    def load_psf(self) -> CharmmPsfFile:
+        psf = CharmmPsfFile(str(self.files.psf_path))
         psf.setBox(
-            metadata.a * angstrom,
-            metadata.b * angstrom,
-            metadata.c * angstrom,
-            metadata.alpha * degree,
-            metadata.beta * degree,
-            metadata.gamma * degree,
+            self.a * angstrom,
+            self.b * angstrom,
+            self.c * angstrom,
+            self.alpha * degree,
+            self.beta * degree,
+            self.gamma * degree,
         )
-        pdb = PDBFile(str(files.pdb_path))
+        return psf
 
-        return LoadedCharmmGuiSystem(
-            inputs_root=files.inputs_root,
-            psf=psf,
-            pdb=pdb,
-            params=params,
-            metadata=metadata,
-        )
+    def load_pdb(self) -> PDBFile:
+        return PDBFile(str(self.files.pdb_path))
 
-    def _parse_step_assembly_file(self) -> SystemMetadata:
+    def load(self) -> tuple[CharmmPsfFile, PDBFile, CharmmParameterSet]:
+        """
+        Convenience loader for downstream simulation setup.
+        Returns (psf, pdb, params).
+        """
+        psf = self.load_psf()
+        pdb = self.load_pdb()
+        params = self.load_params()
+        return psf, pdb, params
 
-        text = _read_text(self.files.box_path)
+    @staticmethod
+    def _parse_step_assembly_file(path: Path) -> dict[str, str | float | int]:
+        text = _read_text(path)
         values: dict[str, str] = {}
+
         for line in text.splitlines():
             line = line.strip()
             if not line or not line.upper().startswith("SET "):
@@ -172,20 +177,20 @@ class CharmmGuiSystem(BaseModel):
         def i(key: str, default: int = 0) -> int:
             return int(float(values.get(key, default)))
 
-        return SystemMetadata(
-            boxtype=values.get("BOXTYPE", "RECT"),
-            a=f("A"),
-            b=f("B"),
-            c=f("C"),
-            alpha=f("ALPHA", 90.0),
-            beta=f("BETA", 90.0),
-            gamma=f("GAMMA", 90.0),
-            zcen=f("ZCEN", 0.0),
-            nliptop=i("NLIPTOP"),
-            nlipbot=i("NLIPBOT"),
-            nwater=i("NWATER"),
-            niontot=i("NIONTOT"),
-        )
+        return {
+            "boxtype": values.get("BOXTYPE", "RECT"),
+            "a": f("A"),
+            "b": f("B"),
+            "c": f("C"),
+            "alpha": f("ALPHA", 90.0),
+            "beta": f("BETA", 90.0),
+            "gamma": f("GAMMA", 90.0),
+            "zcen": f("ZCEN", 0.0),
+            "nliptop": i("NLIPTOP"),
+            "nlipbot": i("NLIPBOT"),
+            "nwater": i("NWATER"),
+            "niontot": i("NIONTOT"),
+        }
 
 
 def _read_text(path: Path) -> str:
@@ -193,11 +198,7 @@ def _read_text(path: Path) -> str:
 
 
 def _parse_toppar_stream(toppar_str: Path) -> list[str]:
-    """Parse CHARMM-GUI toppar.str into an ordered file list for CharmmParameterSet.
-
-    We keep the exact stream/open order from CHARMM-GUI instead of glob-sorting,
-    because parameter order can matter for CHARMM-style inputs.
-    """
+    """Parse CHARMM-GUI toppar.str into an ordered file list for CharmmParameterSet."""
     files: list[str] = []
     pattern_open = re.compile(r"name\s+(toppar/\S+)", flags=re.IGNORECASE)
     pattern_stream = re.compile(r"stream\s+(toppar/\S+)", flags=re.IGNORECASE)
@@ -206,10 +207,12 @@ def _parse_toppar_stream(toppar_str: Path) -> list[str]:
         line = raw_line.strip()
         if not line or line.startswith("!") or line.startswith("*"):
             continue
+
         m_open = pattern_open.search(line)
         if m_open:
             files.append(m_open.group(1))
             continue
+
         m_stream = pattern_stream.search(line)
         if m_stream:
             files.append(m_stream.group(1))
@@ -218,4 +221,5 @@ def _parse_toppar_stream(toppar_str: Path) -> list[str]:
         raise ValueError(
             f"Could not parse any topology/parameter files from {toppar_str}"
         )
+
     return files

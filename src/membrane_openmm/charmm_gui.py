@@ -59,4 +59,4 @@ class CharmmGuiFiles(BaseModel):
 
     @property
     def params_file(self) -> CharmmParameterSet:
-        return CharmmParameterSet(str(self.inputs_dir / "step5_assembly.str"))
+        return CharmmParameterSet(str(self.inputs_dir / "toppar.str"))

@@ -20,12 +20,7 @@ def run_single_step(
     pdb = files.pdb_file
     params = files.params_file
 
-    system = psf.createSystem(
-        params,
-        nonbondedMethod=PME,
-        nonbondedCutoff=1.2 * nanometer,
-        constraints=HBonds,
-    )
+    system = psf.createSystem(params)
 
     integrator = LangevinMiddleIntegrator(
         303.15 * kelvin,

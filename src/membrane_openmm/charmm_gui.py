@@ -13,9 +13,15 @@ class CharmmGuiFiles(BaseModel):
     model_config = {"frozen": True}
 
     REQUIRED_FILES: ClassVar[tuple[str, ...]] = (
-        "step5_assembly.psf",
-        "step5_assembly.pdb",
-        "step5_assembly.str",
+        "membrane_restraint.charmm_openmm.str",
+        "step6.1_equilibration.inp",
+        "step6.2_equlibration.inp",
+        "step6.3_equlibration.inp",
+        "step6.4_equlibration.inp",
+        "step6.5_equlibration.inp",
+        "step6.6_equlibration.inp",
+        "step6.7_equlibration.inp",
+        "step7_production.inp",
         "toppar.str",
     )
 
@@ -61,7 +67,7 @@ class CharmmGuiFiles(BaseModel):
 
 
 class CharmmGuiSystem(BaseModel):
-    """Validated CHARMM-GUI system with metadata parsed from input files (CharmmGuiFiles)."""
+    """Validated CHARMM-GUI system with metadata parsed from input files (the CharmmGuiFiles)."""
 
     model_config = {"frozen": True}
 
@@ -79,11 +85,6 @@ class CharmmGuiSystem(BaseModel):
     nlipbot: int
     nwater: int
     niontot: int
-
-    @classmethod
-    def from_root(cls, inputs_root: Path) -> "CharmmGuiSystem":
-        files = CharmmGuiFiles.from_root(inputs_root)
-        return cls.from_files(files)
 
     @classmethod
     def from_files(cls, files: CharmmGuiFiles) -> "CharmmGuiSystem":

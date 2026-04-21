@@ -154,96 +154,11 @@ def run_case(
     inputs_root: Path,
     outdir: str | Path,
     temperature_k: float = 303.15,
-    platform_name: str | None = None,
-    stages: Iterable[Stage] = DEFAULT_STAGES,
-    report_interval: int = 5_000,
-    checkpoint_interval: int = 50_000,
-    continue_from_existing: bool = True,
 ) -> None:
 
     files = CharmmGuiFiles.from_root(inputs_root=inputs_root)
-    system = CharmmGuiSystem(files=files)
+    system = CharmmGuiSystem.from_files(files=files)
     loaded = system.load()
 
     # TODO: I think we should use here the validated output dir now
     _write_metadata(outdir, loaded, temperature_k)
-
-
-
-
-    # previous_state_xml: Path | None = None
-    #
-    # for index, stage in enumerate(stages, start=1):
-    #     stage_dir = outdir / f"{index:02d}_{stage.name}"
-    #     stage_dir.mkdir(parents=True, exist_ok=True)
-    #     state_xml = stage_dir / f"{stage.name}.state.xml"
-    #     checkpoint_path = stage_dir / f"{stage.name}.chk"
-    #     thermo_csv = stage_dir / f"{stage.name}.thermo.csv"
-    #     dcd_path = stage_dir / f"{stage.name}.dcd"
-    #     final_pdb = stage_dir / f"{stage.name}.final.pdb"
-    #
-    #     if continue_from_existing and state_xml.exists():
-    #         previous_state_xml = state_xml
-    #         print(f"[skip] {stage.name} already finished -> {state_xml}")
-    #         continue
-    #
-    #     print(
-    #         f"[run] {stage.name}: steps={stage.steps}, dt_fs={stage.dt_fs}, membrane_barostat={stage.use_membrane_barostat}"
-    #     )
-    #     simulation = _build_simulation(loaded, temperature_k, stage, platform_name)
-    #     dof = _compute_degrees_of_freedom(simulation.system)
-    #
-    #     if previous_state_xml is None:
-    #         simulation.context.setPositions(loaded.pdb.positions)
-    #         simulation.context.setVelocitiesToTemperature(temperature_k * kelvin)
-    #         if stage.minimize_first:
-    #             simulation.minimizeEnergy(maxIterations=10_000)
-    #     else:
-    #         simulation.loadState(str(previous_state_xml))
-    #
-    #     simulation.reporters.append(DCDReporter(str(dcd_path), report_interval))
-    #
-    #     for completed in range(0, stage.steps, report_interval):
-    #         n = min(report_interval, stage.steps - completed)
-    #         simulation.step(n)
-    #
-    #         state = simulation.context.getState(getEnergy=True)
-    #         step_now = completed + n
-    #         time_ps = step_now * stage.dt_fs / 1000.0
-    #         ke = state.getKineticEnergy().value_in_unit(kilojoule_per_mole)
-    #         pe = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
-    #         temperature = (
-    #             2.0 * state.getKineticEnergy() / (dof * MOLAR_GAS_CONSTANT_R)
-    #         ).value_in_unit(kelvin)
-    #         lx, ly, lz = _box_vectors_to_lengths_nm(state)
-    #         volume_nm3 = _volume_nm3(lx, ly, lz)
-    #         area_xy_nm2 = lx * ly
-    #         area_per_lipid_nm2 = (
-    #             area_xy_nm2 / loaded.metadata.nliptop
-    #             if loaded.metadata.nliptop
-    #             else float("nan")
-    #         )
-    #
-    #         row = {
-    #             "stage": stage.name,
-    #             "step": step_now,
-    #             "time_ps": round(time_ps, 6),
-    #             "dt_fs": stage.dt_fs,
-    #             "temperature_k": round(float(temperature), 6),
-    #             "potential_energy_kj_mol": round(float(pe), 6),
-    #             "kinetic_energy_kj_mol": round(float(ke), 6),
-    #             "lx_nm": round(lx, 6),
-    #             "ly_nm": round(ly, 6),
-    #             "lz_nm": round(lz, 6),
-    #             "area_xy_nm2": round(area_xy_nm2, 6),
-    #             "area_per_lipid_nm2": round(area_per_lipid_nm2, 6),
-    #             "volume_nm3": round(volume_nm3, 6),
-    #         }
-    #         _append_csv_row(thermo_csv, row)
-    #
-    #         if checkpoint_interval > 0 and step_now % checkpoint_interval == 0:
-    #             simulation.saveCheckpoint(str(checkpoint_path))
-    #
-    #     simulation.saveState(str(state_xml))
-    #     _save_final_pdb(simulation, final_pdb)
-    #     previous_state_xml = state_xml

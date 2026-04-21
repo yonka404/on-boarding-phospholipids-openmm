@@ -23,7 +23,29 @@ def run_case(
 
     files = CharmmGuiFiles.from_root(inputs_root=inputs_root)
     system = CharmmGuiSystem.from_files(files=files)
-    loaded = system.load()
 
-    # TODO: I think we should use here the validated output dir now
-    _write_metadata(outdir, loaded, temperature_k)
+    # TODO: apply restraints
+    psf, pdb, params = system_info.load()
+
+    system = psf.createSystem(
+        params,
+        nonbondedMethod=PME,
+        nonbondedCutoff=1.2 * nanometer,
+        constraints=HBonds,
+    )
+
+    integrator = LangevinMiddleIntegrator(
+        303.15 * kelvin,
+        1.0 / picosecond,
+        0.001 * picosecond,
+    )
+
+    simulation = Simulation(psf.topology, system, integrator)
+    simulation.context.setPositions(pdb.positions)
+
+    print("Minimizing...")
+    simulation.minimizeEnergy(
+        tolerance=100.0 * kilojoule_per_mole / nanometer,
+        maxIterations=5000,
+    )
+    print("Done.")

@@ -1,8 +1,7 @@
-import pdb
 from pathlib import Path
 
 from openmm import LangevinMiddleIntegrator
-from openmm.app import PME, HBonds, Simulation
+from openmm.app import Simulation
 from openmm.unit import kelvin, kilojoule_per_mole, nanometer, picosecond
 
 from membrane_openmm.charmm_gui import CharmmGuiFiles
@@ -32,7 +31,6 @@ def run_single_step(
     simulation.context.setPositions(pdb.positions)
 
     print("Minimizing...")
-    # TODO: apply restraints
     simulation.minimizeEnergy(
         tolerance=100.0 * kilojoule_per_mole / nanometer,
         maxIterations=5000,

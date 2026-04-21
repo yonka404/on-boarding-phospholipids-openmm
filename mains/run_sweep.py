@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from membrane_openmm.pipeline import run_case
+from membrane_openmm.pipeline import run_single_step
 
 
 def infer_case_name(system_root: Path) -> str:
@@ -48,7 +48,7 @@ def main() -> None:
         case_name = infer_case_name(system_root)
         outdir = results_root / case_name
         print(f"\n=== Running {case_name} ===")
-        run_case(
+        run_single_step(
             system_root=system_root,
             outdir=outdir,
             temperature_k=args.temperature,

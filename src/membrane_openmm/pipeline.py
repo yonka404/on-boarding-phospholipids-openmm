@@ -1,31 +1,25 @@
-from dataclasses import dataclass
+import pdb
 from pathlib import Path
-from typing import Iterable
 
-import numpy as np
-from openmm import Platform
-from openmm.app import DCDReporter
-from openmm.unit import (
-    MOLAR_GAS_CONSTANT_R,
-    kelvin,
-    kilojoule_per_mole,
-    nanometer,
-)
+from openmm import LangevinMiddleIntegrator
+from openmm.app import PME, HBonds, Simulation
+from openmm.unit import kelvin, kilojoule_per_mole, nanometer, picosecond
 
 from membrane_openmm.charmm_gui import CharmmGuiFiles, CharmmGuiSystem
 
 
-def run_case(
-    inputs_root: Path,
-    outdir: str | Path,
-    temperature_k: float = 303.15,
+def run_single_step(
+    inputs_dir: Path,
+    outputs_dir: Path,
+    step_name: str,
 ) -> None:
 
-    files = CharmmGuiFiles.from_root(inputs_root=inputs_root)
-    system = CharmmGuiSystem.from_files(files=files)
+    files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
+    system_info = CharmmGuiSystem.from_files(files=files)
 
-    # TODO: apply restraints
-    psf, pdb, params = system_info.load()
+    psf = system_info.psf_path
+    pdb = system_info.pdb_path
+    params = system_info.params
 
     system = psf.createSystem(
         params,
@@ -44,6 +38,7 @@ def run_case(
     simulation.context.setPositions(pdb.positions)
 
     print("Minimizing...")
+    # TODO: apply restraints
     simulation.minimizeEnergy(
         tolerance=100.0 * kilojoule_per_mole / nanometer,
         maxIterations=5000,

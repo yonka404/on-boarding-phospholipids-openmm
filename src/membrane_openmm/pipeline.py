@@ -5,7 +5,7 @@ from openmm import LangevinMiddleIntegrator
 from openmm.app import PME, HBonds, Simulation
 from openmm.unit import kelvin, kilojoule_per_mole, nanometer, picosecond
 
-from membrane_openmm.charmm_gui import CharmmGuiFiles, CharmmGuiSystem
+from membrane_openmm.charmm_gui import CharmmGuiFiles
 
 
 def run_single_step(
@@ -15,11 +15,10 @@ def run_single_step(
 ) -> None:
 
     files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
-    system_info = CharmmGuiSystem.from_files(files=files)
 
-    psf = system_info.psf_path
-    pdb = system_info.pdb_path
-    params = system_info.params
+    psf = files.psf_file
+    pdb = files.pdb_file
+    params = files.params_file
 
     system = psf.createSystem(
         params,

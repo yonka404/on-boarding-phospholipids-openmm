@@ -1,9 +1,7 @@
-import re
 from pathlib import Path
 from typing import ClassVar
 
 from openmm.app import CharmmParameterSet, CharmmPsfFile, PDBFile
-from openmm.unit import angstrom, degree
 from pydantic import BaseModel, field_validator
 
 
@@ -14,6 +12,9 @@ class CharmmGuiFiles(BaseModel):
 
     REQUIRED_FILES: ClassVar[tuple[str, ...]] = (
         "membrane_restraint.charmm_openmm.str",
+        "step5_assembly.psf",
+        "step5_assembly.pdb",
+        "step5_assembly.str",
         "step6.1_equilibration.inp",
         "step6.2_equilibration.inp",
         "step6.3_equilibration.inp",
@@ -48,80 +49,14 @@ class CharmmGuiFiles(BaseModel):
 
         return root
 
-    # TODO: think if this is necessary
-    # @property
-    # def psf_path(self) -> Path:
-    #     return self.inputs_dir / "step5_assembly.psf"
-    #
-    # @property
-    # def pdb_path(self) -> Path:
-    #     return self.inputs_dir / "step5_assembly.pdb"
-    #
-    # @property
-    # def box_path(self) -> Path:
-    #     return self.inputs_dir / "step5_assembly.str"
-    #
-    # @property
-    # def toppar_str_path(self) -> Path:
-    #     return self.inputs_dir / "toppar.str"
+    @property
+    def psf_file(self) -> CharmmPsfFile:
+        return CharmmPsfFile(str(self.inputs_dir / "step5_assembly.psf"))
 
+    @property
+    def pdb_file(self) -> PDBFile:
+        return PDBFile(str(self.inputs_dir / "step5_assembly.pdb"))
 
-class CharmmGuiSystem(BaseModel):
-    """Validated CHARMM-GUI system with metadata parsed from input files (the CharmmGuiFiles)."""
-
-    model_config = {"frozen": True}
-
-    files: CharmmGuiFiles
-
-    boxtype: str = "RECT"
-    a: float
-    b: float
-    c: float
-    alpha: float = 90.0
-    beta: float = 90.0
-    gamma: float = 90.0
-    zcen: float = 0.0
-    nliptop: int
-    nlipbot: int
-    nwater: int
-    niontot: int
-
-    @classmethod
-    def from_files(cls, files: CharmmGuiFiles) -> "CharmmGuiSystem":
-        values = cls._parse_step_assembly_file(files)
-        return cls(files=files, **values)
-
-    # @field_validator("boxtype")
-    # @classmethod
-    # def _normalize_boxtype(cls, v: str) -> str:
-    #     value = v.strip().upper()
-    #     if not value:
-    #         raise ValueError("boxtype must not be empty")
-    #     return value
-    #
-    # @field_validator("a", "b", "c")
-    # @classmethod
-    # def _box_dims_positive(cls, v: float, info) -> float:
-    #     if v <= 0:
-    #         raise ValueError(
-    #             f"Box dimension '{info.field_name}' must be positive, got {v}"
-    #         )
-    #     return v
-    #
-    # @field_validator("alpha", "beta", "gamma")
-    # @classmethod
-    # def _angles_in_range(cls, v: float, info) -> float:
-    #     if not (0.0 < v < 180.0):
-    #         raise ValueError(f"Angle '{info.field_name}' must be in (0, 180), got {v}")
-    #     return v
-    #
-    # @field_validator("nliptop", "nlipbot", "nwater", "niontot")
-    # @classmethod
-    # def _counts_non_negative(cls, v: int, info) -> int:
-    #     if v < 0:
-    #         raise ValueError(f"'{info.field_name}' must be >= 0, got {v}")
-    #     return v
-    #
-    # @property
-    # def total_lipids(self) -> int:
-    #     return self.nliptop + self.nlipbot
+    @property
+    def params_file(self) -> CharmmParameterSet:
+        return CharmmParameterSet(str(self.inputs_dir / "step5_assembly.str"))

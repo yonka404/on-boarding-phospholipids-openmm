@@ -11,22 +11,40 @@ def run_single_step(
     inputs_dir: Path,
     outputs_dir: Path,
     step_name: str,
+    starting_pdb: Path | None = None,
 ) -> None:
-
     files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
 
+    step_output_dir = outputs_dir / step_name
+    step_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load the common system definition
     psf = files.psf_file
-    pdb = files.pdb_file
     params = files.params_file
 
+    # Choose coordinates: original structure or previous stage output
+    if starting_pdb is None:
+        coordinates_pdb = files.pdb_file
+        print(
+            f"[{step_name}] Using initial CHARMM-GUI coordinates: {inputs_dir / 'step5_assembly.pdb'}"
+        )
+    else:
+        if not starting_pdb.is_file():
+            raise FileNotFoundError(f"Starting PDB not found: {starting_pdb}")
+        coordinates_pdb = PDBFile(str(starting_pdb))
+        print(f"[{step_name}] Using chained coordinates: {starting_pdb}")
+
+    # Create the OpenMM system
     system = psf.createSystem(params)
 
+    # Define the integrator
     integrator = LangevinMiddleIntegrator(
         303.15 * kelvin,
         1.0 / picosecond,
         0.001 * picosecond,
     )
 
+    # Build the simulation
     simulation = Simulation(psf.topology, system, integrator)
     simulation.context.setPositions(pdb.positions)
 

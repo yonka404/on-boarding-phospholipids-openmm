@@ -45,7 +45,9 @@ class CharmmGuiFiles(BaseModel):
             raise ValueError(f"inputs_dir is not a directory: {root}")
 
         missing_dirs = [
-            root / name for name in cls.REQUIRED_DIRECTORIES if not (root / name).is_dir()
+            root / name
+            for name in cls.REQUIRED_DIRECTORIES
+            if not (root / name).is_dir()
         ]
         missing_files = [
             root / name for name in cls.REQUIRED_FILES if not (root / name).is_file()
@@ -62,8 +64,7 @@ class CharmmGuiFiles(BaseModel):
         if missing_parameter_files:
             joined = "\n".join(f"  - {p}" for p in missing_parameter_files)
             raise ValueError(
-                "Missing topology/parameter files referenced by toppar.str:\n"
-                f"{joined}"
+                f"Missing topology/parameter files referenced by toppar.str:\n{joined}"
             )
 
         return root
@@ -126,6 +127,7 @@ class CharmmGuiFiles(BaseModel):
     def psf_file(self) -> CharmmPsfFile:
         return CharmmPsfFile(str(self.inputs_dir / "step5_assembly.psf"))
 
+    # TODO: make this dynamic
     @property
     def pdb_file(self) -> PDBFile:
         return PDBFile(str(self.inputs_dir / "step5_assembly.pdb"))

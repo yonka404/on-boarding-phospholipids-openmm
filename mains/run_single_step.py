@@ -4,11 +4,11 @@ from membrane_openmm.pipeline import run_single_step
 
 
 def main() -> None:
-    # Remember to set the working directory path correctly in your IDE!
     run_single_step(
         inputs_dir=Path("data/inputs/charmmgui"),
         outputs_dir=Path("data/outputs"),
         step_name="step6.1_equilibration",
+        starting_pdb=None,
     )
 
 

@@ -46,11 +46,21 @@ def run_single_step(
 
     # Build the simulation
     simulation = Simulation(psf.topology, system, integrator)
-    simulation.context.setPositions(pdb.positions)
+    simulation.context.setPositions(coordinates_pdb.positions)
 
-    print("Minimizing...")
+    print(f"[{step_name}] Minimizing...")
     simulation.minimizeEnergy(
         tolerance=100.0 * kilojoule_per_mole / nanometer,
         maxIterations=5000,
     )
-    print("Done.")
+    print(f"[{step_name}] Done.")
+
+    output_pdb = step_output_dir / "minimized.pdb"
+    state = simulation.context.getState(getPositions=True)
+
+    with open(output_pdb, "w") as handle:
+        PDBFile.writeFile(simulation.topology, state.getPositions(), handle)
+
+    print(f"[{step_name}] Wrote minimized structure to: {output_pdb}")
+
+    return output_pdb

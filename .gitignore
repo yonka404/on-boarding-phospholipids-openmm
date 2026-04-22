@@ -2,7 +2,7 @@ docs/
 /inputs
 
 # UV
-#uv.lock
+uv.lock
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
@@ -19,14 +19,16 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+.ruff_cache/
+
 .dmypy.json
 dmypy.json
 
 # PyCharm
-#.idea/
+.idea/
 
 # Visual Studio Code
-# .vscode/
+.vscode/
 
 # Ruff stuff:
 .ruff_cache/

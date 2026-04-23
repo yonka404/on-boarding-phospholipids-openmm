@@ -1,0 +1,10 @@
+openmm==8.5.0
+mypy>=1.11
+pydantic==2.12.5
+ruff>=0.15.10
+
+[amd]
+openmm-hip-7==8.5.0
+
+[nvidia]
+openmm-cuda-12==8.5.0

@@ -137,3 +137,37 @@ class CharmmGuiFiles(BaseModel):
         return CharmmParameterSet(
             *(str(path) for path in self._parameter_file_paths(self.inputs_dir))
         )
+
+    @property
+    def openmm_inputs_dir(self) -> Path:
+        openmm_dir = self.inputs_dir.parent / "openmm"
+        if not openmm_dir.is_dir():
+            raise FileNotFoundError(
+                f"OpenMM protocol directory not found: {openmm_dir}"
+            )
+        return openmm_dir
+
+    @property
+    def box_lengths_angstrom(self) -> tuple[float, float, float]:
+        values = self._assembly_box_values(self.inputs_dir / "step5_assembly.str")
+        return values["A"], values["B"], values["C"]
+
+    @staticmethod
+    def _assembly_box_values(step5_assembly_file: Path) -> dict[str, float]:
+        values: dict[str, float] = {}
+
+        for raw_line in step5_assembly_file.read_text().splitlines():
+            parts = raw_line.split()
+            if len(parts) >= 4 and parts[0].upper() == "SET" and parts[2] == "=":
+                key = parts[1].upper()
+                if key in {"A", "B", "C"}:
+                    values[key] = float(parts[3])
+
+        missing = [key for key in ("A", "B", "C") if key not in values]
+        if missing:
+            joined = ", ".join(missing)
+            raise ValueError(
+                f"Missing box dimensions ({joined}) in {step5_assembly_file}"
+            )
+
+        return values

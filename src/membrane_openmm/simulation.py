@@ -66,9 +66,11 @@ class OpenMMSimulationFactory:
         psf = files.psf_file
         params = files.params_file
 
+        # TODO: arent these already passed when reading the .psf file? I dunno if this info is stored in the pdf or where I would like to check
         a_length, b_length, c_length = files.box_lengths_angstrom
         psf.setBox(a_length * angstrom, b_length * angstrom, c_length * angstrom)
 
+        # TODO: check if these input parameters are correct
         system = psf.createSystem(
             params,
             nonbondedMethod=PME,
@@ -156,7 +158,9 @@ class OpenMMSimulationFactory:
             self._log_selected_platform(simulation, step_name, properties)
             return simulation
 
-        details = "; ".join(failures) if failures else "no OpenMM platforms were available"
+        details = (
+            "; ".join(failures) if failures else "no OpenMM platforms were available"
+        )
         raise RuntimeError(
             f"[{step_name}] Could not initialize any OpenMM platform. {details}"
         )

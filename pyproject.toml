@@ -2,7 +2,7 @@
 name = "membrane-openmm"
 version = "0.1.0"
 description = "Python/OpenMM scaffold for CHARMM-GUI membrane size-effect runs"
-requires-python = ">=3.11"
+requires-python = ">=3.12.10"
 dependencies = [
     "openmm==8.5.0",
     "mypy>=1.11",

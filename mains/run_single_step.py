@@ -13,7 +13,7 @@ def main() -> None:
 
     run_single_step(
         inputs_dir=Path("data/inputs/charmmgui"),
-        outputs_dir=Path("data/outputs"),
+        outputs_dir=Path("data/outputs/charmmgui"),
         step_name="step6.1_equilibration",
     )
 

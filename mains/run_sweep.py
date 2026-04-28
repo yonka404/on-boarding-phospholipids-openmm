@@ -13,7 +13,7 @@ def main() -> None:
 
     run_protocol_sweep(
         inputs_dir=Path("data/inputs/charmmgui"),
-        outputs_dir=Path("data/outputs"),
+        outputs_dir=Path("data/outputs/charmmgui"),
     )
 
 

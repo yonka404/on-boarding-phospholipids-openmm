@@ -50,7 +50,7 @@ class StageRunner:
         files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
         protocol = OpenMMStageProtocol.from_file(
             step_name=step_name,
-            protocol_path=files.openmm_inputs_dir / f"{step_name}.inp",
+            protocol_path=files.inputs_dir / f"{step_name}.inp",
         )
         artifacts = StageArtifacts.for_stage(outputs_dir, step_name)
         artifacts.create_directory()

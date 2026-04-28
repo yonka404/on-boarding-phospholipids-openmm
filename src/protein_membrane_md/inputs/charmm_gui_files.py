@@ -19,6 +19,7 @@ class CharmmGuiFiles(BaseModel):
         "membrane_restraint.charmm_openmm.str",
         "step5_assembly.psf",
         "step5_assembly.pdb",
+        "step5_assembly.str",
         "step6.1_equilibration.inp",
         "step6.2_equilibration.inp",
         "step6.3_equilibration.inp",
@@ -136,15 +137,6 @@ class CharmmGuiFiles(BaseModel):
         return CharmmParameterSet(
             *(str(path) for path in self._parameter_file_paths(self.inputs_dir))
         )
-
-    @property
-    def openmm_inputs_dir(self) -> Path:
-        openmm_dir = self.inputs_dir.parent / "openmm"
-        if not openmm_dir.is_dir():
-            raise FileNotFoundError(
-                f"OpenMM protocol directory not found: {openmm_dir}"
-            )
-        return openmm_dir
 
     @property
     def box_lengths_angstrom(self) -> tuple[float, float, float]:

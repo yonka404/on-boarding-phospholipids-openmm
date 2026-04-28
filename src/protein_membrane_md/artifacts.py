@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from membrane_openmm.protocol import ProtocolSchedule
-
+from protein_membrane_md.protocols import ProtocolSchedule
 
 FINAL_COORDINATES_FILENAME = "final_coordinates.pdb"
 FINAL_STATE_FILENAME = "final_state.xml"

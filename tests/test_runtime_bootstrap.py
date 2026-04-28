@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from membrane_openmm import _runtime
+from protein_membrane_md import _runtime
 
 
 class RuntimeBootstrapTests(unittest.TestCase):
@@ -60,20 +60,22 @@ class RuntimeBootstrapTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch("membrane_openmm._runtime.platform.system", return_value="Linux"),
             mock.patch(
-                "membrane_openmm._runtime.discover_rocm_roots",
+                "protein_membrane_md._runtime.platform.system", return_value="Linux"
+            ),
+            mock.patch(
+                "protein_membrane_md._runtime.discover_rocm_roots",
                 return_value=(first_root, second_root),
             ),
             mock.patch(
-                "membrane_openmm._runtime.hip_runtime_libraries",
+                "protein_membrane_md._runtime.hip_runtime_libraries",
                 side_effect=(first_libs, second_libs),
             ),
             mock.patch(
-                "membrane_openmm._runtime.preload_shared_libraries",
+                "protein_membrane_md._runtime.preload_shared_libraries",
                 side_effect=(OSError("broken"), None),
             ) as preload,
-            mock.patch("membrane_openmm._runtime.logger") as logger,
+            mock.patch("protein_membrane_md._runtime.logger") as logger,
         ):
             _runtime.bootstrap_openmm_runtime()
 

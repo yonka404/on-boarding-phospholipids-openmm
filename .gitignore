@@ -33,5 +33,7 @@ dmypy.json
 # Packaging artifacts
 *.egg-info/
 
+# misc
+.codex
 
 

@@ -127,20 +127,16 @@ class CharmmGuiFiles(BaseModel):
     def psf_file(self) -> CharmmPsfFile:
         return CharmmPsfFile(str(self.inputs_dir / "step5_assembly.psf"))
 
-    # TODO: make this dynamic
     @property
     def pdb_file(self) -> PDBFile:
         return PDBFile(str(self.inputs_dir / "step5_assembly.pdb"))
 
     @property
     def params_file(self) -> CharmmParameterSet:
-        # TODO: see what paths am I passing here
-        print(*(str(path) for path in self._parameter_file_paths(self.inputs_dir)))
         return CharmmParameterSet(
             *(str(path) for path in self._parameter_file_paths(self.inputs_dir))
         )
 
-    # TODO: there is an error here! I deleted this openmm inputs dir because I dont need it and is causing troubles now
     @property
     def openmm_inputs_dir(self) -> Path:
         openmm_dir = self.inputs_dir.parent / "openmm"

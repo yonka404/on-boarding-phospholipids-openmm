@@ -3,14 +3,14 @@ from pathlib import Path
 
 from openmm.unit import kilojoule_per_mole, nanometer
 
-from membrane_openmm.artifacts import RestartResolver, StageArtifacts
-from membrane_openmm.charmm_gui import CharmmGuiFiles
-from membrane_openmm.protocol import (
+from protein_membrane_md.artifacts import RestartResolver, StageArtifacts
+from protein_membrane_md.inputs import CharmmGuiFiles
+from protein_membrane_md.protocols import (
     DEFAULT_PROTOCOL_SCHEDULE,
     OpenMMStageProtocol,
     ProtocolSchedule,
 )
-from membrane_openmm.simulation import (
+from protein_membrane_md.simulation import (
     OpenMMSimulationFactory,
     SimulationInitializer,
     StageOutputWriter,
@@ -91,28 +91,3 @@ class StageRunner:
         logger.info("[%s] Dynamics complete", protocol.step_name)
 
         return self.output_writer.write(simulation, artifacts, protocol)
-
-
-class SweepRunner:
-    def __init__(
-        self,
-        stage_runner: StageRunner | None = None,
-        protocol_schedule: ProtocolSchedule | None = None,
-    ) -> None:
-        self.protocol_schedule = protocol_schedule or DEFAULT_PROTOCOL_SCHEDULE
-        self.stage_runner = stage_runner or StageRunner(
-            protocol_schedule=self.protocol_schedule
-        )
-
-    def run(
-        self,
-        inputs_dir: Path,
-        outputs_dir: Path,
-    ) -> None:
-        for step_name in self.protocol_schedule.stage_names:
-            logger.info("Running %s", step_name)
-            self.stage_runner.run(
-                inputs_dir=inputs_dir,
-                outputs_dir=outputs_dir,
-                step_name=step_name,
-            )

@@ -5,7 +5,7 @@ os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
 import unittest
 from unittest import mock
 
-from membrane_openmm.simulation import OpenMMSimulationFactory
+from protein_membrane_md.simulation import OpenMMSimulationFactory
 
 
 class SimulationPlatformFallbackTests(unittest.TestCase):
@@ -23,11 +23,11 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "membrane_openmm.simulation.Platform.getPlatformByName",
+                "protein_membrane_md.simulation.factory.Platform.getPlatformByName",
                 side_effect=platform_lookup,
             ) as get_platform,
             mock.patch(
-                "membrane_openmm.simulation.Simulation",
+                "protein_membrane_md.simulation.factory.Simulation",
                 return_value=created_simulation,
             ) as simulation_ctor,
             mock.patch.object(factory, "_log_selected_platform"),

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from membrane_openmm.protocol import DEFAULT_PROTOCOL_SCHEDULE
-from membrane_openmm.workflow import StageRunner, SweepRunner
+from protein_membrane_md.protocols import DEFAULT_PROTOCOL_SCHEDULE
+from protein_membrane_md.workflows import StageRunner, SweepRunner
 
 PROTOCOL_STAGES = DEFAULT_PROTOCOL_SCHEDULE.stage_names
 

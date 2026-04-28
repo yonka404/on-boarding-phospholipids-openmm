@@ -8,28 +8,11 @@ from openmm import (
     MonteCarloMembraneBarostat,
     Platform,
 )
-from openmm.app import (
-    AllBonds,
-    DCDReporter,
-    HAngles,
-    HBonds,
-    PME,
-    PDBFile,
-    Simulation,
-    StateDataReporter,
-)
-from openmm.unit import (
-    angstrom,
-    bar,
-    kelvin,
-    kilojoule_per_mole,
-    nanometer,
-    picosecond,
-)
+from openmm.app import AllBonds, HAngles, HBonds, PME, Simulation
+from openmm.unit import angstrom, bar, kelvin, nanometer, picosecond
 
-from membrane_openmm.artifacts import StageArtifacts
-from membrane_openmm.charmm_gui import CharmmGuiFiles
-from membrane_openmm.protocol import OpenMMStageProtocol
+from protein_membrane_md.inputs import SimulationInputFiles
+from protein_membrane_md.protocols import OpenMMStageProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +43,15 @@ _DEVICE_NAME_KEYS = ("Name", "name", "DeviceName", "deviceName")
 class OpenMMSimulationFactory:
     def create(
         self,
-        files: CharmmGuiFiles,
+        files: SimulationInputFiles,
         protocol: OpenMMStageProtocol,
     ) -> Simulation:
         psf = files.psf_file
         params = files.params_file
 
-        # TODO: arent these already passed when reading the .psf file? I dunno if this info is stored in the pdf or where I would like to check
         a_length, b_length, c_length = files.box_lengths_angstrom
         psf.setBox(a_length * angstrom, b_length * angstrom, c_length * angstrom)
 
-        # TODO: check if these input parameters are correct
         system = psf.createSystem(
             params,
             nonbondedMethod=PME,
@@ -370,137 +351,3 @@ class OpenMMSimulationFactory:
             protocol.temperature_kelvin * kelvin,
             protocol.barostat_interval_steps,
         )
-
-
-class SimulationInitializer:
-    def initialize(
-        self,
-        simulation: Simulation,
-        restart_source,
-        protocol: OpenMMStageProtocol,
-    ) -> None:
-        if restart_source.state_path is not None:
-            logger.info(
-                "[%s] Loading restart state from %s",
-                protocol.step_name,
-                restart_source.state_path,
-            )
-            simulation.loadState(str(restart_source.state_path))
-            return
-
-        if not restart_source.coordinates_path.is_file():
-            raise FileNotFoundError(
-                f"[{protocol.step_name}] Coordinate file not found for "
-                f"{restart_source.description}: {restart_source.coordinates_path}"
-            )
-
-        coordinates_pdb = PDBFile(str(restart_source.coordinates_path))
-        simulation.context.setPositions(coordinates_pdb.positions)
-
-        logger.info(
-            "[%s] Loaded coordinates from %s: %s",
-            protocol.step_name,
-            restart_source.description,
-            restart_source.coordinates_path,
-        )
-
-        self._initialize_velocities(simulation, protocol)
-
-    def _initialize_velocities(
-        self,
-        simulation: Simulation,
-        protocol: OpenMMStageProtocol,
-    ) -> None:
-        target_temperature = (
-            protocol.velocity_temperature_kelvin
-            if protocol.generate_velocities
-            and protocol.velocity_temperature_kelvin is not None
-            else protocol.temperature_kelvin
-        )
-
-        simulation.context.setVelocitiesToTemperature(target_temperature * kelvin)
-
-        if protocol.generate_velocities:
-            logger.info(
-                "[%s] Generated initial velocities at %.2f K",
-                protocol.step_name,
-                target_temperature,
-            )
-        else:
-            logger.warning(
-                "[%s] No restart state was available, so velocities were regenerated at %.2f K",
-                protocol.step_name,
-                target_temperature,
-            )
-
-
-class StageReporterInstaller:
-    def install(
-        self,
-        simulation: Simulation,
-        artifacts: StageArtifacts,
-        protocol: OpenMMStageProtocol,
-    ) -> None:
-        simulation.reporters.append(
-            StateDataReporter(
-                str(artifacts.state_data_path),
-                protocol.state_report_interval_steps,
-                step=True,
-                time=True,
-                potentialEnergy=True,
-                kineticEnergy=True,
-                totalEnergy=True,
-                temperature=True,
-                volume=True,
-                density=True,
-                speed=True,
-                separator=",",
-            )
-        )
-
-        simulation.reporters.append(
-            DCDReporter(
-                str(artifacts.trajectory_path),
-                protocol.trajectory_report_interval_steps,
-            )
-        )
-
-        logger.info(
-            "[%s] Reporting state data to %s and trajectory to %s",
-            protocol.step_name,
-            artifacts.state_data_path,
-            artifacts.trajectory_path,
-        )
-
-
-class StageOutputWriter:
-    def write(
-        self,
-        simulation: Simulation,
-        artifacts: StageArtifacts,
-        protocol: OpenMMStageProtocol,
-    ):
-        simulation.saveState(str(artifacts.final_state_path))
-
-        state = simulation.context.getState(getPositions=True)
-        simulation.topology.setPeriodicBoxVectors(state.getPeriodicBoxVectors())
-
-        with open(artifacts.final_coordinates_path, "w") as handle:
-            PDBFile.writeFile(
-                simulation.topology,
-                state.getPositions(),
-                handle,
-            )
-
-        logger.info(
-            "[%s] Wrote restart state to %s",
-            protocol.step_name,
-            artifacts.final_state_path,
-        )
-        logger.info(
-            "[%s] Wrote final coordinates to %s",
-            protocol.step_name,
-            artifacts.final_coordinates_path,
-        )
-
-        return artifacts.final_coordinates_path

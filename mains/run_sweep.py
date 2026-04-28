@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from membrane_openmm.pipeline import run_protocol_sweep
+from protein_membrane_md.pipeline import run_protocol_sweep
 
 
 def main() -> None:

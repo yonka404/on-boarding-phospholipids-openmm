@@ -1,7 +1,7 @@
 [project]
-name = "membrane-openmm"
+name = "protein-membrane-md"
 version = "0.1.0"
-description = "Python/OpenMM scaffold for CHARMM-GUI membrane size-effect runs"
+description = "Python/OpenMM scaffold for protein-in-membrane MD runs"
 requires-python = ">=3.12.10"
 dependencies = [
     "openmm==8.5.0",
@@ -27,3 +27,7 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["openmm", "openmm.*"]
+ignore_missing_imports = true

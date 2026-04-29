@@ -10,7 +10,8 @@ Important paths:
 - `src/protein_membrane_md/simulation/`: OpenMM setup, platform selection, initialization, and reporters
 - `src/protein_membrane_md/workflows/`: stage and sweep runners
 - `mains/`: runnable scripts
-- `tests/`: test suite written with Python's built-in `unittest`
+- `tests/`: test suite written with Python's built-in `unittest`; see
+  `tests/README.md` for folder organization
 - `data/`: local input data; do not modify unless explicitly requested
 
 ## Input Data Context
@@ -44,7 +45,7 @@ uv run python -m unittest
 For narrower changes, run the matching test module first, for example:
 
 ```bash
-uv run python -m unittest tests.test_stage_protocol
+uv run python -m unittest tests.protocols.test_stage
 ```
 
 Use these checks when relevant to the changed code:

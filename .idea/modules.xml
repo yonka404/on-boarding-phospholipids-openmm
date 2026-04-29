@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/on-boarding-phospholipids-openmm.iml" filepath="$PROJECT_DIR$/.idea/on-boarding-phospholipids-openmm.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/protein-membrane-md.iml" filepath="$PROJECT_DIR$/.idea/protein-membrane-md.iml" />
     </modules>
   </component>
 </project>

@@ -3,7 +3,6 @@ from pathlib import Path
 
 from openmm.unit import kilojoule_per_mole, nanometer
 from protein_membrane_md.artifacts import RestartResolver, StageArtifacts
-from protein_membrane_md.inputs import CharmmGuiFiles
 from protein_membrane_md.protocols import (
     DEFAULT_PROTOCOL_SCHEDULE,
     OpenMMStageProtocol,
@@ -47,7 +46,9 @@ class StageRunner:
         # This is just a sanity check
         self.protocol_schedule.require_stage(step_name)
 
-        files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
+        # files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
+        files = OpenmmNativeFiles.from_root(inputs_dir=inputs_dir)
+
         protocol = OpenMMStageProtocol.from_file(
             step_name=step_name,
             protocol_path=files.inputs_dir / f"{step_name}.inp",

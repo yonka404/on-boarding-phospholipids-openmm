@@ -12,8 +12,8 @@ def main() -> None:
     )
 
     run_single_step(
-        inputs_dir=Path("data/inputs/charmmgui"),
-        outputs_dir=Path("data/outputs/charmmgui"),
+        inputs_dir=Path("data/inputs/openmm_native"),
+        outputs_dir=Path("data/outputs/openmm_native"),
         step_name="step6.1_equilibration",
     )
 

@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 
 from openmm.unit import kilojoule_per_mole, nanometer
-
 from protein_membrane_md.artifacts import RestartResolver, StageArtifacts
 from protein_membrane_md.inputs import CharmmGuiFiles
 from protein_membrane_md.protocols import (
@@ -22,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 class StageRunner:
     def __init__(
-        self,
-        protocol_schedule: ProtocolSchedule | None = None,
-        restart_resolver: RestartResolver | None = None,
-        simulation_factory: OpenMMSimulationFactory | None = None,
-        simulation_initializer: SimulationInitializer | None = None,
-        reporter_installer: StageReporterInstaller | None = None,
-        output_writer: StageOutputWriter | None = None,
+            self,
+            protocol_schedule: ProtocolSchedule | None = None,
+            restart_resolver: RestartResolver | None = None,
+            simulation_factory: OpenMMSimulationFactory | None = None,
+            simulation_initializer: SimulationInitializer | None = None,
+            reporter_installer: StageReporterInstaller | None = None,
+            output_writer: StageOutputWriter | None = None,
     ) -> None:
         self.protocol_schedule = protocol_schedule or DEFAULT_PROTOCOL_SCHEDULE
         self.restart_resolver = restart_resolver or RestartResolver(
@@ -40,11 +39,12 @@ class StageRunner:
         self.output_writer = output_writer or StageOutputWriter()
 
     def run(
-        self,
-        inputs_dir: Path,
-        outputs_dir: Path,
-        step_name: str,
+            self,
+            inputs_dir: Path,
+            outputs_dir: Path,
+            step_name: str,
     ) -> Path:
+        # This is just a sanity check
         self.protocol_schedule.require_stage(step_name)
 
         files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
@@ -73,8 +73,8 @@ class StageRunner:
             )
             simulation.minimizeEnergy(
                 tolerance=protocol.minimization_tolerance_kj_mol_nm
-                * kilojoule_per_mole
-                / nanometer,
+                          * kilojoule_per_mole
+                          / nanometer,
                 maxIterations=protocol.minimization_steps,
             )
             logger.info("[%s] Minimization complete", protocol.step_name)

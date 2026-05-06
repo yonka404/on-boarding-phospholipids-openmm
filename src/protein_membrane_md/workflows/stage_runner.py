@@ -2,7 +2,9 @@ import logging
 from pathlib import Path
 
 from openmm.unit import kilojoule_per_mole, nanometer
+
 from protein_membrane_md.artifacts import RestartResolver, StageArtifacts
+from protein_membrane_md.inputs.openmm_native_files import OpenmmNativeFiles
 from protein_membrane_md.protocols import (
     DEFAULT_PROTOCOL_SCHEDULE,
     OpenMMStageProtocol,

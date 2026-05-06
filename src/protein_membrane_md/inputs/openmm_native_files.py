@@ -6,13 +6,13 @@ from openmm.app import CharmmParameterSet, CharmmPsfFile, PDBFile
 from pydantic import BaseModel, field_validator
 
 
-class OpenMMNativeFiles(BaseModel):
+class OpenmmNativeFiles(BaseModel):
     """Validated CHARMM-GUI OpenMM-native files needed for the OpenMM setup."""
 
     model_config = {"frozen": True}
 
     OPENMM_SUBDIRECTORY: ClassVar[str] = "openmm"
-    REQUIRED_PARENT_DIRECTORIES: ClassVar[tuple[str, ...]] = (
+    OTHER_REQUIRED_SUBDIRECTORIES: ClassVar[tuple[str, ...]] = (
         "lig",
         "toppar",
     )
@@ -34,25 +34,26 @@ class OpenMMNativeFiles(BaseModel):
     inputs_dir: Path
 
     @classmethod
-    def from_root(cls, inputs_dir: Path) -> "OpenMMNativeFiles":
-        """Construct from an OpenMM-native root or its nested openmm directory."""
-        root = Path(inputs_dir).expanduser()
-        openmm_dir = root / cls.OPENMM_SUBDIRECTORY
-        return cls(inputs_dir=openmm_dir if openmm_dir.is_dir() else root)
+    def from_root(cls, inputs_dir: Path) -> "OpenmmNativeFiles":
+        openmm_dir = inputs_dir / cls.OPENMM_SUBDIRECTORY
+        return cls(inputs_dir=openmm_dir)
 
     @field_validator("inputs_dir", mode="after")
     @classmethod
     def _validate_inputs_root(cls, v: Path) -> Path:
-        root = v.expanduser().resolve()
+        root = v.resolve()
 
+        # validate the openmm subfolder
         if not root.is_dir():
             raise ValueError(f"inputs_dir is not a directory: {root}")
 
+        # and here validate the lig and toppar subfolders
         missing_dirs = [
             root.parent / name
-            for name in cls.REQUIRED_PARENT_DIRECTORIES
+            for name in cls.OTHER_REQUIRED_SUBDIRECTORIES
             if not (root.parent / name).is_dir()
         ]
+
         missing_files = [
             root / name for name in cls.REQUIRED_FILES if not (root / name).is_file()
         ]
@@ -68,7 +69,9 @@ class OpenMMNativeFiles(BaseModel):
                 f"No topology/parameter files referenced by {root / 'toppar.str'}"
             )
 
-        missing_parameter_files = [path for path in parameter_paths if not path.is_file()]
+        missing_parameter_files = [
+            path for path in parameter_paths if not path.is_file()
+        ]
         if missing_parameter_files:
             joined = "\n".join(f"  - {p}" for p in missing_parameter_files)
             raise ValueError(
@@ -167,7 +170,7 @@ class OpenMMNativeFiles(BaseModel):
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            return OpenMMNativeFiles._legacy_sysinfo_box_lengths(sysinfo_file, text)
+            return OpenmmNativeFiles._legacy_sysinfo_box_lengths(sysinfo_file, text)
 
         dimensions = data.get("dimensions")
         if not isinstance(dimensions, (list, tuple)) or len(dimensions) < 3:
@@ -203,6 +206,3 @@ class OpenMMNativeFiles(BaseModel):
             raise ValueError(f"Missing box dimensions ({joined}) in {sysinfo_file}")
 
         return values["A"], values["B"], values["C"]
-
-
-OpenmmNativeFiles = OpenMMNativeFiles

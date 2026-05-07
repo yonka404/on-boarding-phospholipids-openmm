@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import ClassVar
 
@@ -12,9 +13,19 @@ class OpenmmNativeFiles(BaseModel):
     model_config = {"frozen": True}
 
     OPENMM_SUBDIRECTORY: ClassVar[str] = "openmm"
-    OTHER_REQUIRED_SUBDIRECTORIES: ClassVar[tuple[str, ...]] = (
+    REQUIRED_INPUT_ROOT_SUBDIRECTORIES: ClassVar[tuple[str, ...]] = (
         "lig",
         "toppar",
+    )
+    LIG_REQUIRED_FILES: ClassVar[tuple[str, ...]] = (
+        "lig.prm",
+        "lig.rtf",
+    )
+    TOPPAR_EXPECTED_FILE_COUNT: ClassVar[int] = 56
+    TOPPAR_PATTERN_REQUIREMENTS: ClassVar[tuple[tuple[str, int, str], ...]] = (
+        (r"\.(?:rtf|prm|str)\Z", 56, "CHARMM topology/parameter/stream files"),
+        (r"\Atoppar_all36_.*\.str\Z", 40, "toppar_all36 stream files"),
+        (r"lipid", 20, "lipid-related files"),
     )
     REQUIRED_FILES: ClassVar[tuple[str, ...]] = (
         "step5_input.psf",
@@ -47,14 +58,13 @@ class OpenmmNativeFiles(BaseModel):
         if not root.is_dir():
             raise ValueError(f"inputs_dir is not a directory: {root}")
 
-        # and here validate the lig and toppar subfolders
         missing_dirs = [
             root.parent / name
-            for name in cls.OTHER_REQUIRED_SUBDIRECTORIES
+            for name in cls.REQUIRED_INPUT_ROOT_SUBDIRECTORIES
             if not (root.parent / name).is_dir()
         ]
 
-        # TODO: double-check here if I validate ALL files from openmm_native
+        # TODO: double-check here if I validate ALL files from openmm_native (restraints)
         missing_files = [
             root / name for name in cls.REQUIRED_FILES if not (root / name).is_file()
         ]
@@ -64,79 +74,95 @@ class OpenmmNativeFiles(BaseModel):
             joined = "\n".join(f"  - {p}" for p in missing)
             raise ValueError(f"Missing required OpenMM-native files:\n{joined}")
 
-        parameter_paths = cls._parameter_file_paths(root)
-        if not parameter_paths:
-            raise ValueError(
-                f"No topology/parameter files referenced by {root / 'toppar.str'}"
-            )
-
-        missing_parameter_files = [
-            path for path in parameter_paths if not path.is_file()
-        ]
-        if missing_parameter_files:
-            joined = "\n".join(f"  - {p}" for p in missing_parameter_files)
-            raise ValueError(
-                f"Missing topology/parameter files referenced by toppar.str:\n{joined}"
-            )
-
+        cls._validate_lig_directory(root.parent / "lig")
+        cls._validate_toppar_directory(root.parent / "toppar")
         cls._sysinfo_box_lengths(root / "sysinfo.dat")
+
         return root
 
     @classmethod
-    def _parameter_file_paths(cls, root: Path) -> tuple[Path, ...]:
+    def _validate_lig_directory(cls, lig_dir: Path) -> None:
+        missing_files = [
+            lig_dir / name
+            for name in cls.LIG_REQUIRED_FILES
+            if not (lig_dir / name).is_file()
+        ]
+        if missing_files:
+            joined = "\n".join(f"  - {p}" for p in missing_files)
+            raise ValueError(f"Missing required OpenMM-native ligand files:\n{joined}")
+
+    @classmethod
+    def _validate_toppar_directory(cls, toppar_dir: Path) -> None:
+        files = tuple(sorted(path for path in toppar_dir.iterdir() if path.is_file()))
+        file_count = len(files)
+        if file_count != cls.TOPPAR_EXPECTED_FILE_COUNT:
+            raise ValueError(
+                f"Expected {cls.TOPPAR_EXPECTED_FILE_COUNT} files in "
+                f"{toppar_dir}, found {file_count}"
+            )
+
+        filenames = tuple(path.name for path in files)
+        pattern_failures: list[str] = []
+        for pattern, minimum, description in cls.TOPPAR_PATTERN_REQUIREMENTS:
+            matched = sum(1 for name in filenames if re.search(pattern, name))
+            if matched < minimum:
+                pattern_failures.append(
+                    f"  - expected at least {minimum} {description} "
+                    f"matching /{pattern}/, found {matched}"
+                )
+
+        if pattern_failures:
+            joined = "\n".join(pattern_failures)
+            raise ValueError(
+                f"Unexpected OpenMM-native toppar layout in {toppar_dir}:\n{joined}"
+            )
+
+    @classmethod
+    def _parameter_paths_from_toppar_stream(cls, root: Path) -> tuple[Path, ...]:
         paths: list[Path] = []
         seen: set[Path] = set()
 
-        for reference in cls._parameter_references(root / "toppar.str"):
-            path = cls._resolve_reference(root, reference)
-            if path not in seen:
-                paths.append(path)
-                seen.add(path)
-
-        return tuple(paths)
-
-    @staticmethod
-    def _parameter_references(toppar_file: Path) -> tuple[str, ...]:
-        references: list[str] = []
-
-        for raw_line in toppar_file.read_text().splitlines():
+        for raw_line in (root / "toppar.str").read_text().splitlines():
             line = raw_line.split("!", maxsplit=1)[0].split("#", maxsplit=1)[0].strip()
             if not line:
                 continue
 
             words = line.split()
             command = words[0].lower()
+            reference = words[0]
             if command == "stream" and len(words) > 1:
-                references.append(words[1])
+                reference = words[1]
             elif command == "open":
+                reference = ""
                 lowered = [word.lower() for word in words]
                 if "name" in lowered:
                     name_index = lowered.index("name") + 1
                     if name_index < len(words):
-                        references.append(words[name_index])
-            else:
-                references.append(words[0])
+                        reference = words[name_index]
+            if not reference:
+                continue
 
-        return tuple(references)
+            ref_path = Path(reference)
+            candidates = [ref_path] if ref_path.is_absolute() else [root / ref_path]
+            if not ref_path.is_absolute():
+                stripped_parts = tuple(
+                    part for part in ref_path.parts if part not in {".", ".."}
+                )
+                if stripped_parts:
+                    candidates.append(root.joinpath(*stripped_parts))
 
-    @staticmethod
-    def _resolve_reference(root: Path, reference: str) -> Path:
-        ref_path = Path(reference)
-        candidates = [ref_path] if ref_path.is_absolute() else [root / ref_path]
+            path = candidates[0].expanduser().resolve()
+            for candidate in candidates:
+                resolved = candidate.expanduser().resolve()
+                if resolved.is_file():
+                    path = resolved
+                    break
 
-        if not ref_path.is_absolute():
-            stripped_parts = tuple(
-                part for part in ref_path.parts if part not in {".", ".."}
-            )
-            if stripped_parts:
-                candidates.append(root.joinpath(*stripped_parts))
+            if path not in seen:
+                paths.append(path)
+                seen.add(path)
 
-        for candidate in candidates:
-            resolved = candidate.expanduser().resolve()
-            if resolved.is_file():
-                return resolved
-
-        return candidates[0].expanduser().resolve()
+        return tuple(paths)
 
     @property
     def psf_file(self) -> CharmmPsfFile:
@@ -151,13 +177,12 @@ class OpenmmNativeFiles(BaseModel):
         return self.inputs_dir / "step5_input.pdb"
 
     @property
-    def initial_coordinates_description(self) -> str:
-        return "initial CHARMM-GUI OpenMM coordinates"
-
-    @property
     def params_file(self) -> CharmmParameterSet:
         return CharmmParameterSet(
-            *(str(path) for path in self._parameter_file_paths(self.inputs_dir))
+            *(
+                str(path)
+                for path in self._parameter_paths_from_toppar_stream(self.inputs_dir)
+            )
         )
 
     @property

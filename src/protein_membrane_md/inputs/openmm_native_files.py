@@ -54,6 +54,7 @@ class OpenmmNativeFiles(BaseModel):
             if not (root.parent / name).is_dir()
         ]
 
+        # TODO: double-check here if I validate ALL files from openmm_native
         missing_files = [
             root / name for name in cls.REQUIRED_FILES if not (root / name).is_file()
         ]

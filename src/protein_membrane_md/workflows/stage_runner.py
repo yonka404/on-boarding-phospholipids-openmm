@@ -62,6 +62,7 @@ class StageRunner:
             inputs_dir=files.inputs_dir,
             outputs_dir=outputs_dir,
             step_name=step_name,
+            initial_coordinates_path=files.initial_coordinates_path,
         )
 
         simulation = self.simulation_factory.create(files, protocol)

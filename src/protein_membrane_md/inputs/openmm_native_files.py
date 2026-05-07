@@ -178,6 +178,7 @@ class OpenmmNativeFiles(BaseModel):
 
     @property
     def params_file(self) -> CharmmParameterSet:
+        # TODO: understand _parameter_paths_from_toppar_stream
         return CharmmParameterSet(
             *(
                 str(path)
@@ -212,6 +213,7 @@ class OpenmmNativeFiles(BaseModel):
         sysinfo_file: Path,
         text: str,
     ) -> tuple[float, float, float]:
+        # TODO: understand this method
         keys = {"BOXLX": "A", "BOXLY": "B", "BOXLZ": "C"}
         values: dict[str, float] = {}
 

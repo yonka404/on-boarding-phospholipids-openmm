@@ -8,7 +8,6 @@ from protein_membrane_md.inputs.openmm_native_files import OpenmmNativeFiles
 from protein_membrane_md.protocols import (
     DEFAULT_PROTOCOL_SCHEDULE,
     OpenMMStageProtocol,
-    ProtocolSchedule,
 )
 from protein_membrane_md.simulation import (
     OpenMMSimulationFactory,
@@ -23,17 +22,13 @@ logger = logging.getLogger(__name__)
 class StageRunner:
     def __init__(
             self,
-            protocol_schedule: ProtocolSchedule | None = None,
             restart_resolver: RestartResolver | None = None,
             simulation_factory: OpenMMSimulationFactory | None = None,
             simulation_initializer: SimulationInitializer | None = None,
             reporter_installer: StageReporterInstaller | None = None,
             output_writer: StageOutputWriter | None = None,
     ) -> None:
-        self.protocol_schedule = protocol_schedule or DEFAULT_PROTOCOL_SCHEDULE
-        self.restart_resolver = restart_resolver or RestartResolver(
-            self.protocol_schedule
-        )
+        self.restart_resolver = restart_resolver or RestartResolver()
         self.simulation_factory = simulation_factory or OpenMMSimulationFactory()
         self.simulation_initializer = simulation_initializer or SimulationInitializer()
         self.reporter_installer = reporter_installer or StageReporterInstaller()
@@ -46,7 +41,7 @@ class StageRunner:
             step_name: str,
     ) -> Path:
         # This is just a sanity check
-        self.protocol_schedule.require_stage(step_name)
+        DEFAULT_PROTOCOL_SCHEDULE.require_stage(step_name)
 
         # files = CharmmGuiFiles.from_root(inputs_dir=inputs_dir)
         files = OpenmmNativeFiles.from_root(inputs_dir=inputs_dir)

@@ -3,12 +3,10 @@ import unittest
 from pathlib import Path
 
 from protein_membrane_md.artifacts import RestartResolver, StageArtifacts
-from protein_membrane_md.protocols import DEFAULT_PROTOCOL_SCHEDULE
-
 
 class RestartResolverTests(unittest.TestCase):
     def test_first_stage_uses_input_adapter_initial_coordinates(self) -> None:
-        resolver = RestartResolver(DEFAULT_PROTOCOL_SCHEDULE)
+        resolver = RestartResolver()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -26,7 +24,7 @@ class RestartResolverTests(unittest.TestCase):
         self.assertEqual(restart_source.description, "initial input coordinates")
 
     def test_later_stage_prefers_previous_state_when_available(self) -> None:
-        resolver = RestartResolver(DEFAULT_PROTOCOL_SCHEDULE)
+        resolver = RestartResolver()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

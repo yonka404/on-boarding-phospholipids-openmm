@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from protein_membrane_md.protocols import ProtocolSchedule
+from protein_membrane_md.protocols import DEFAULT_PROTOCOL_SCHEDULE
 
 FINAL_COORDINATES_FILENAME = "final_coordinates.pdb"
 FINAL_STATE_FILENAME = "final_state.xml"
@@ -49,21 +49,19 @@ class RestartSource:
 
 
 class RestartResolver:
-    def __init__(self, protocol_schedule: ProtocolSchedule) -> None:
-        self._protocol_schedule = protocol_schedule
-
     def resolve(
         self,
         inputs_dir: Path,
         outputs_dir: Path,
         step_name: str,
+            initial_coordinates_path: Path,
     ) -> RestartSource:
-        previous_stage = self._protocol_schedule.previous_stage(step_name)
+        previous_stage = DEFAULT_PROTOCOL_SCHEDULE.previous_stage(step_name)
         if previous_stage is None:
             return RestartSource(
-                coordinates_path=inputs_dir / "step5_assembly.pdb",
+                coordinates_path=initial_coordinates_path,
                 state_path=None,
-                description="initial CHARMM-GUI coordinates",
+                description="initial input coordinates",
             )
 
         previous_artifacts = StageArtifacts.for_stage(outputs_dir, previous_stage)

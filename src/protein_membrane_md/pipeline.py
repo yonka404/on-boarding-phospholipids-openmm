@@ -5,10 +5,9 @@ from protein_membrane_md.workflows import StageRunner, SweepRunner
 
 PROTOCOL_STAGES = DEFAULT_PROTOCOL_SCHEDULE.stage_names
 
-_default_stage_runner = StageRunner(protocol_schedule=DEFAULT_PROTOCOL_SCHEDULE)
+_default_stage_runner = StageRunner()
 _default_sweep_runner = SweepRunner(
     stage_runner=_default_stage_runner,
-    protocol_schedule=DEFAULT_PROTOCOL_SCHEDULE,
 )
 
 

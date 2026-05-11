@@ -1,5 +1,7 @@
 import logging
+from pathlib import Path
 
+from openmm import XmlSerializer
 from openmm.app import PDBFile, Simulation
 from openmm.unit import kelvin
 
@@ -17,11 +19,11 @@ class SimulationInitializer:
     ) -> None:
         if restart_source.state_path is not None:
             logger.info(
-                "[%s] Loading restart state from %s",
+                "[%s] Loading restart dynamic state from %s",
                 protocol.step_name,
                 restart_source.state_path,
             )
-            simulation.loadState(str(restart_source.state_path))
+            self._load_restart_state(simulation, restart_source.state_path)
             return
 
         if not restart_source.coordinates_path.is_file():
@@ -68,3 +70,12 @@ class SimulationInitializer:
                 protocol.step_name,
                 target_temperature,
             )
+
+    def _load_restart_state(self, simulation: Simulation, state_path: Path) -> None:
+        state = XmlSerializer.deserialize(state_path.read_text())
+        # Preserve the current stage's force parameters; previous XML parameters can
+        # refer to restraints that this stage intentionally changed or removed.
+        simulation.context.setPeriodicBoxVectors(*state.getPeriodicBoxVectors())
+        simulation.context.setPositions(state.getPositions())
+        simulation.context.setVelocities(state.getVelocities())
+        simulation.context.setTime(state.getTime())

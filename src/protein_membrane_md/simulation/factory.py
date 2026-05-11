@@ -8,11 +8,26 @@ from openmm import (
     MonteCarloMembraneBarostat,
     Platform,
 )
-from openmm.app import AllBonds, HAngles, HBonds, PME, Simulation
+from openmm.app import (
+    AllBonds,
+    CutoffNonPeriodic,
+    CutoffPeriodic,
+    Ewald,
+    HAngles,
+    HBonds,
+    LJPME,
+    NoCutoff,
+    PME,
+    Simulation,
+)
 from openmm.unit import angstrom, bar, kelvin, nanometer, picosecond
 
 from protein_membrane_md.inputs import SimulationInputFiles
 from protein_membrane_md.protocols import OpenMMStageProtocol
+from protein_membrane_md.simulation.system_modifiers import (
+    apply_charmm_gui_force_switch,
+    apply_openmm_native_restraints,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +36,14 @@ _CONSTRAINT_BY_NAME = {
     "allbonds": AllBonds,
     "hangles": HAngles,
     "none": None,
+}
+
+_NONBONDED_METHOD_BY_NAME = {
+    "nocutoff": NoCutoff,
+    "cutoffnonperiodic": CutoffNonPeriodic,
+    "cutoffperiodic": CutoffPeriodic,
+    "ewald": Ewald,
+    "pme": PME,
 }
 
 _MEMBRANE_XY_MODE_BY_NAME = {
@@ -52,14 +75,15 @@ class OpenMMSimulationFactory:
         a_length, b_length, c_length = files.box_lengths_angstrom
         psf.setBox(a_length * angstrom, b_length * angstrom, c_length * angstrom)
 
-        system = psf.createSystem(
-            params,
-            nonbondedMethod=PME,
-            nonbondedCutoff=protocol.cutoff_distance_nm * nanometer,
-            switchDistance=protocol.switch_distance_nm * nanometer,
-            ewaldErrorTolerance=protocol.ewald_tolerance,
-            constraints=self._constraint_from_name(protocol.constraints_name),
-        )
+        system = psf.createSystem(params, **self._system_options(protocol))
+        system = apply_charmm_gui_force_switch(system, psf, protocol)
+        if protocol.restraints_enabled:
+            system = apply_openmm_native_restraints(
+                system,
+                protocol,
+                files.inputs_dir,
+                self._restraint_reference_positions(files),
+            )
 
         barostat = self._build_barostat(protocol)
         if barostat is not None:
@@ -285,6 +309,43 @@ class OpenMMSimulationFactory:
             )
 
         return _CONSTRAINT_BY_NAME[normalized]
+
+    def _system_options(self, protocol: OpenMMStageProtocol):
+        vdw_method_name = protocol.vdw_method_name.strip().lower()
+        options = {
+            "nonbondedMethod": self._nonbonded_method(protocol),
+            "nonbondedCutoff": protocol.cutoff_distance_nm * nanometer,
+            "ewaldErrorTolerance": protocol.ewald_tolerance,
+            "constraints": self._constraint_from_name(protocol.constraints_name),
+        }
+
+        if vdw_method_name == "switch":
+            options["switchDistance"] = protocol.switch_distance_nm * nanometer
+
+        return options
+
+    def _nonbonded_method(self, protocol: OpenMMStageProtocol):
+        vdw_method_name = protocol.vdw_method_name.strip().lower()
+        if vdw_method_name == "ljpme":
+            return LJPME
+
+        coulomb_method_name = protocol.coulomb_method_name.strip().lower()
+        if coulomb_method_name not in _NONBONDED_METHOD_BY_NAME:
+            supported = ", ".join(sorted(_NONBONDED_METHOD_BY_NAME))
+            raise ValueError(
+                f"Unsupported Coulomb setting {protocol.coulomb_method_name!r}. "
+                f"Expected one of: {supported}"
+            )
+
+        return _NONBONDED_METHOD_BY_NAME[coulomb_method_name]
+
+    @staticmethod
+    def _restraint_reference_positions(files: SimulationInputFiles):
+        reference_positions = getattr(files, "restraint_reference_positions", None)
+        if reference_positions is not None:
+            return reference_positions
+
+        return files.pdb_file.positions
 
     def _build_barostat(self, protocol: OpenMMStageProtocol):
         if not protocol.pressure_coupling:

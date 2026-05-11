@@ -104,6 +104,20 @@ class OpenmmNativeFilesValidationTests(unittest.TestCase):
             tuple(str(path.resolve()) for path in expected_paths),
         )
 
+    def test_restraint_reference_positions_come_from_native_crd_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(Path(tmpdir))
+            files = OpenmmNativeFiles.from_root(root)
+            crd_file = mock.Mock(positions=object())
+
+            with mock.patch(
+                "protein_membrane_md.inputs.openmm_native_files.CharmmCrdFile",
+                return_value=crd_file,
+            ) as crd_file_ctor:
+                self.assertIs(files.restraint_reference_positions, crd_file.positions)
+
+        crd_file_ctor.assert_called_once_with(str(root / "openmm" / "step5_input.crd"))
+
     def test_runtime_parameter_path_resolution_is_a_single_helper(self) -> None:
         self.assertTrue(
             hasattr(OpenmmNativeFiles, "_parameter_paths_from_toppar_stream")

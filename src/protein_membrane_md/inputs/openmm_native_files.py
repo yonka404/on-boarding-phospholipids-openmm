@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from typing import ClassVar
 
-from openmm.app import CharmmParameterSet, CharmmPsfFile, PDBFile
+from openmm.app import CharmmCrdFile, CharmmParameterSet, CharmmPsfFile, PDBFile
 from pydantic import BaseModel, field_validator
 
 
@@ -171,6 +171,14 @@ class OpenmmNativeFiles(BaseModel):
     @property
     def pdb_file(self) -> PDBFile:
         return PDBFile(str(self.inputs_dir / "step5_input.pdb"))
+
+    @property
+    def crd_file(self) -> CharmmCrdFile:
+        return CharmmCrdFile(str(self.inputs_dir / "step5_input.crd"))
+
+    @property
+    def restraint_reference_positions(self):
+        return self.crd_file.positions
 
     @property
     def initial_coordinates_path(self) -> Path:

@@ -17,7 +17,10 @@ class StageOutputWriter:
     ):
         simulation.saveState(str(artifacts.final_state_path))
 
-        state = simulation.context.getState(getPositions=True)
+        state = simulation.context.getState(
+            getPositions=True,
+            enforcePeriodicBox=True,
+        )
         simulation.topology.setPeriodicBoxVectors(state.getPeriodicBoxVectors())
 
         with open(artifacts.final_coordinates_path, "w") as handle:

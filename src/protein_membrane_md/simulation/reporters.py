@@ -36,6 +36,7 @@ class StageReporterInstaller:
             DCDReporter(
                 str(artifacts.trajectory_path),
                 protocol.trajectory_report_interval_steps,
+                enforcePeriodicBox=True,
             )
         )
 

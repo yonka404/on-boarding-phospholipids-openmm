@@ -1,102 +1,114 @@
 import os
 
-os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
+os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from protein_membrane_md.inputs.openmm_native_files import OpenmmNativeFiles
+from charmm_gui_md.membrane.profile import MEMBRANE_PROFILE
+from charmm_gui_md.shared.inputs.openmm_native_files import OpenMMNativeFiles
+from charmm_gui_md.shared.profile import SystemProfile
+from charmm_gui_md.solution.profile import SOLUTION_PROFILE
 
 
-VALID_TOPPAR_FILES = (
-    *(f"toppar_all36_lipid_{index:02d}.str" for index in range(22)),
-    *(f"toppar_all36_prot_{index:02d}.str" for index in range(18)),
-    "top_all36_prot.rtf",
-    "par_all36m_prot.prm",
-    "top_all36_na.rtf",
-    "par_all36_na.prm",
-    "top_all36_carb.rtf",
-    "par_all36_carb.prm",
-    "top_all36_lipid.rtf",
-    "par_all36_lipid.prm",
-    "top_all36_cgenff.rtf",
-    "par_all36_cgenff.prm",
-    "top_interface.rtf",
-    "par_interface.prm",
-    "toppar_water_ions.str",
-    "toppar_dum_noble_gases.str",
-    "toppar_ions_won.str",
-    "cam.str",
-)
-
-
-class OpenmmNativeFilesValidationTests(unittest.TestCase):
-    def test_from_root_accepts_required_lig_and_toppar_shape(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = _write_openmm_native_fixture(Path(tmpdir))
-
-            files = OpenmmNativeFiles.from_root(root)
-
-        self.assertEqual(files.inputs_dir, (root / "openmm").resolve())
-
-    def test_from_root_requires_lig_parameter_file(self) -> None:
+class OpenMMNativeFilesValidationTests(unittest.TestCase):
+    def test_membrane_profile_accepts_only_referenced_parameter_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = _write_openmm_native_fixture(
                 Path(tmpdir),
-                missing_lig_files=("lig.prm",),
-            )
-
-            with self.assertRaisesRegex(ValueError, r"lig\.prm"):
-                OpenmmNativeFiles.from_root(root)
-
-    def test_from_root_rejects_wrong_toppar_file_count(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = _write_openmm_native_fixture(
-                Path(tmpdir),
-                toppar_files=VALID_TOPPAR_FILES[:-1],
-            )
-
-            with self.assertRaisesRegex(ValueError, r"Expected 56 files"):
-                OpenmmNativeFiles.from_root(root)
-
-    def test_from_root_rejects_toppar_without_enough_lipid_files(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = _write_openmm_native_fixture(
-                Path(tmpdir),
-                toppar_files=(
-                    *(f"toppar_all36_sterol_{index:02d}.str" for index in range(40)),
-                    *(f"top_all36_extra_{index:02d}.rtf" for index in range(16)),
+                profile=MEMBRANE_PROFILE,
+                toppar_stream=(
+                    "../toppar/top_all36_prot.rtf\n"
+                    "../lig/lig.rtf\n"
+                ),
+                referenced_files=(
+                    "toppar/top_all36_prot.rtf",
+                    "lig/lig.rtf",
                 ),
             )
 
-            with self.assertRaisesRegex(ValueError, r"lipid"):
-                OpenmmNativeFiles.from_root(root)
+            files = OpenMMNativeFiles.from_root(root, profile=MEMBRANE_PROFILE)
+
+        self.assertEqual(files.inputs_dir, (root / "openmm").resolve())
+        self.assertEqual(files.profile, MEMBRANE_PROFILE)
+
+    def test_solution_profile_accepts_bundle_without_lig_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=SOLUTION_PROFILE,
+                toppar_stream="../toppar/top_all36_prot.rtf\n",
+                referenced_files=("toppar/top_all36_prot.rtf",),
+            )
+
+            files = OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+        self.assertEqual(files.initial_coordinates_path.name, "step3_input.pdb")
+
+    def test_from_root_rejects_missing_referenced_parameter_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=SOLUTION_PROFILE,
+                toppar_stream="../toppar/missing.str\n",
+            )
+
+            with self.assertRaisesRegex(ValueError, r"missing\.str"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+    def test_from_root_requires_profile_specific_initial_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=SOLUTION_PROFILE,
+                missing_openmm_files=("step3_input.crd",),
+            )
+
+            with self.assertRaisesRegex(ValueError, r"step3_input\.crd"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+    def test_from_root_requires_profile_specific_stage_protocols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=SOLUTION_PROFILE,
+                missing_openmm_files=("step4_equilibration.inp",),
+            )
+
+            with self.assertRaisesRegex(ValueError, r"step4_equilibration\.inp"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
 
     def test_params_file_uses_ordered_references_from_toppar_stream(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = _write_openmm_native_fixture(
                 Path(tmpdir),
+                profile=MEMBRANE_PROFILE,
                 toppar_stream=(
                     "../toppar/top_all36_prot.rtf\n"
-                    "stream ../toppar/toppar_all36_lipid_00.str ! comment\n"
-                    "open read card unit 10 name ../lig/lig.rtf\n"
+                    "../toppar/toppar_water_ions.str ! comment\n"
+                    "../lig/lig.rtf\n"
                     "../toppar/top_all36_prot.rtf\n"
                 ),
+                referenced_files=(
+                    "toppar/top_all36_prot.rtf",
+                    "toppar/toppar_water_ions.str",
+                    "lig/lig.rtf",
+                ),
             )
-            files = OpenmmNativeFiles.from_root(root)
+            files = OpenMMNativeFiles.from_root(root, profile=MEMBRANE_PROFILE)
             params = object()
 
             with mock.patch(
-                "protein_membrane_md.inputs.openmm_native_files.CharmmParameterSet",
+                "charmm_gui_md.shared.inputs.openmm_native_files.CharmmParameterSet",
                 return_value=params,
             ) as parameter_set:
                 self.assertIs(files.params_file, params)
 
         expected_paths = (
             root / "toppar" / "top_all36_prot.rtf",
-            root / "toppar" / "toppar_all36_lipid_00.str",
+            root / "toppar" / "toppar_water_ions.str",
             root / "lig" / "lig.rtf",
         )
         self.assertEqual(
@@ -104,60 +116,135 @@ class OpenmmNativeFilesValidationTests(unittest.TestCase):
             tuple(str(path.resolve()) for path in expected_paths),
         )
 
-    def test_restraint_reference_positions_come_from_native_crd_file(self) -> None:
+    def test_solution_native_file_properties_use_profile_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = _write_openmm_native_fixture(Path(tmpdir))
-            files = OpenmmNativeFiles.from_root(root)
+            root = _write_openmm_native_fixture(Path(tmpdir), profile=SOLUTION_PROFILE)
+            files = OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
             crd_file = mock.Mock(positions=object())
 
             with mock.patch(
-                "protein_membrane_md.inputs.openmm_native_files.CharmmCrdFile",
+                "charmm_gui_md.shared.inputs.openmm_native_files.CharmmCrdFile",
                 return_value=crd_file,
             ) as crd_file_ctor:
                 self.assertIs(files.restraint_reference_positions, crd_file.positions)
 
-        crd_file_ctor.assert_called_once_with(str(root / "openmm" / "step5_input.crd"))
+        crd_file_ctor.assert_called_once_with(str(root / "openmm" / "step3_input.crd"))
 
-    def test_runtime_parameter_path_resolution_is_a_single_helper(self) -> None:
-        self.assertTrue(
-            hasattr(OpenmmNativeFiles, "_parameter_paths_from_toppar_stream")
-        )
-        self.assertFalse(hasattr(OpenmmNativeFiles, "_parameter_references"))
-        self.assertFalse(hasattr(OpenmmNativeFiles, "_resolve_reference"))
+    def test_active_protein_restraints_require_protein_position_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=SOLUTION_PROFILE,
+                protocol_overrides={
+                    "step4_equilibration": "rest = yes\nfc_bb = 400.0\n",
+                },
+            )
+
+            with self.assertRaisesRegex(ValueError, r"prot_pos\.txt"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+    def test_active_lipid_restraints_require_lipid_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=MEMBRANE_PROFILE,
+                protocol_overrides={
+                    "step6.1_equilibration": (
+                        "rest = yes\nfc_lpos = 100.0\nfc_ldih = 50.0\n"
+                    ),
+                },
+            )
+
+            with self.assertRaisesRegex(ValueError, r"(?s)lipid_pos\.txt.*dihe\.txt"):
+                OpenMMNativeFiles.from_root(root, profile=MEMBRANE_PROFILE)
+
+    def test_disabled_restraints_do_not_require_restraint_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(Path(tmpdir), profile=SOLUTION_PROFILE)
+
+            files = OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+        self.assertEqual(files.profile, SOLUTION_PROFILE)
+
+    def test_from_root_rejects_raw_charmm_toppar_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(
+                Path(tmpdir),
+                profile=SOLUTION_PROFILE,
+                toppar_stream="stream ../toppar/toppar_water_ions.str\n",
+                referenced_files=("toppar/toppar_water_ions.str",),
+            )
+
+            with self.assertRaisesRegex(ValueError, r"Unsupported.*toppar\.str"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+    def test_from_root_rejects_non_json_sysinfo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _write_openmm_native_fixture(Path(tmpdir), profile=SOLUTION_PROFILE)
+            (root / "openmm" / "sysinfo.dat").write_text(
+                "BOXLX = 75.0\nBOXLY = 75.0\nBOXLZ = 95.0\n"
+            )
+
+            with self.assertRaisesRegex(ValueError, r"Invalid JSON"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
 
 
 def _write_openmm_native_fixture(
     root: Path,
     *,
-    missing_lig_files: tuple[str, ...] = (),
-    toppar_files: tuple[str, ...] = VALID_TOPPAR_FILES,
+    profile: SystemProfile,
     toppar_stream: str = "",
+    referenced_files: tuple[str, ...] = (),
+    missing_openmm_files: tuple[str, ...] = (),
+    protocol_overrides: dict[str, str] | None = None,
 ) -> Path:
     openmm_dir = root / "openmm"
-    lig_dir = root / "lig"
-    toppar_dir = root / "toppar"
-
     openmm_dir.mkdir()
-    lig_dir.mkdir()
-    toppar_dir.mkdir()
 
-    for name in OpenmmNativeFiles.REQUIRED_FILES:
+    initial_files = tuple(
+        f"{profile.initial_input_prefix}.{suffix}" for suffix in ("psf", "pdb", "crd")
+    )
+    stage_files = tuple(f"{name}.inp" for name in profile.protocol_schedule.stage_names)
+    required_files = (*initial_files, "sysinfo.dat", "toppar.str", *stage_files)
+
+    for name in required_files:
+        if name in missing_openmm_files:
+            continue
         if name == "sysinfo.dat":
             contents = '{"dimensions": [75.0, 75.0, 95.0]}'
         elif name == "toppar.str":
             contents = toppar_stream
+        elif name.endswith(".inp"):
+            step_name = name.removesuffix(".inp")
+            contents = _protocol_text(
+                (protocol_overrides or {}).get(step_name, ""),
+            )
         else:
             contents = ""
         (openmm_dir / name).write_text(contents)
 
-    for name in ("lig.prm", "lig.rtf"):
-        if name not in missing_lig_files:
-            (lig_dir / name).write_text("")
-
-    for name in toppar_files:
-        (toppar_dir / name).write_text("")
+    for relative_name in referenced_files:
+        path = root / relative_name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
 
     return root
+
+
+def _protocol_text(extra: str = "") -> str:
+    return (
+        "nstep = 10\n"
+        "dt = 0.001\n"
+        "nstout = 10\n"
+        "nstdcd = 10\n"
+        "temp = 303.15\n"
+        "fric_coeff = 1.0\n"
+        "r_on = 1.0\n"
+        "r_off = 1.2\n"
+        "ewald_tol = 0.0005\n"
+        "rest = no\n"
+        f"{extra}"
+    )
 
 
 if __name__ == "__main__":

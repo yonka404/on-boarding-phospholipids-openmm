@@ -1,18 +1,31 @@
 import os
 
-os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
+os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from protein_membrane_md import _runtime
+from charmm_gui_md.shared import runtime
 
 
 class RuntimeBootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
-        _runtime._BOOTSTRAP_ATTEMPTED = False
+        runtime._BOOTSTRAP_ATTEMPTED = False
+
+    def test_bootstrap_honors_generic_skip_environment_variable(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP": "1"},
+                clear=True,
+            ),
+            mock.patch("charmm_gui_md.shared.runtime.platform.system") as system,
+        ):
+            runtime.bootstrap_openmm_runtime()
+
+        system.assert_not_called()
 
     def test_discover_rocm_roots_orders_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -27,7 +40,7 @@ class RuntimeBootstrapTests(unittest.TestCase):
             (hipconfig_root / "bin").mkdir(parents=True)
             (hipconfig_root / "bin" / "hipconfig").write_text("")
 
-            roots = _runtime.discover_rocm_roots(
+            roots = runtime.discover_rocm_roots(
                 environ={
                     "ROCM_PATH": str(new_root),
                     "HIP_PATH": str(old_root),
@@ -61,23 +74,23 @@ class RuntimeBootstrapTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch(
-                "protein_membrane_md._runtime.platform.system", return_value="Linux"
+                "charmm_gui_md.shared.runtime.platform.system", return_value="Linux"
             ),
             mock.patch(
-                "protein_membrane_md._runtime.discover_rocm_roots",
+                "charmm_gui_md.shared.runtime.discover_rocm_roots",
                 return_value=(first_root, second_root),
             ),
             mock.patch(
-                "protein_membrane_md._runtime.hip_runtime_libraries",
+                "charmm_gui_md.shared.runtime.hip_runtime_libraries",
                 side_effect=(first_libs, second_libs),
             ),
             mock.patch(
-                "protein_membrane_md._runtime.preload_shared_libraries",
+                "charmm_gui_md.shared.runtime.preload_shared_libraries",
                 side_effect=(OSError("broken"), None),
             ) as preload,
-            mock.patch("protein_membrane_md._runtime.logger") as logger,
+            mock.patch("charmm_gui_md.shared.runtime.logger") as logger,
         ):
-            _runtime.bootstrap_openmm_runtime()
+            runtime.bootstrap_openmm_runtime()
 
         self.assertEqual(preload.call_count, 2)
         logger.info.assert_called_once()

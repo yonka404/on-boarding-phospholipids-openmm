@@ -1,11 +1,10 @@
 # Test Organization
 
 Tests are grouped by the production area they exercise, mirroring
-`src/protein_membrane_md/` where possible:
+`src/charmm_gui_md/` where possible:
 
 - `runtime/`: package import and runtime bootstrap behavior.
-- `inputs/`: input adapter validation for CHARMM-GUI and OpenMM-native files. Create
-  this folder when adding the first input-adapter tests.
+- `inputs/`: OpenMM-native input adapter validation.
 - `protocols/`: stage protocol parsing, schedule behavior, and related protocol
   models.
 - `simulation/`: OpenMM simulation setup, platform selection, initialization, and

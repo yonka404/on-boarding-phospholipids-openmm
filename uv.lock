@@ -21,6 +21,44 @@ wheels = [
 ]
 
 [[package]]
+name = "charmm-gui-md"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "mypy" },
+    { name = "openmm" },
+    { name = "pydantic" },
+    { name = "ruff" },
+]
+
+[package.optional-dependencies]
+amd = [
+    { name = "openmm-hip-7" },
+]
+nvidia = [
+    { name = "openmm-cuda-12" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "openmm", specifier = "==8.5.0" },
+    { name = "openmm-cuda-12", marker = "extra == 'nvidia'", specifier = "==8.5.0" },
+    { name = "openmm-hip-7", marker = "extra == 'amd'", specifier = "==8.5.0" },
+    { name = "pydantic", specifier = "==2.12.5" },
+    { name = "ruff", specifier = ">=0.15.10" },
+]
+provides-extras = ["amd", "nvidia"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pre-commit", specifier = ">=4.6.0" }]
+
+[[package]]
 name = "distlib"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -375,44 +413,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/8e/22/2de9408ac81acbb8a
 wheels = [
     { url = "https://files.pythonhosted.org/packages/80/6e/4b28b62ecb6aae56769c34a8ff1d661473ec1e9519e2d5f8b2c150086b26/pre_commit-4.6.0-py2.py3-none-any.whl", hash = "sha256:e2cf246f7299edcabcf15f9b0571fdce06058527f0a06535068a86d38089f29b", size = 226472, upload-time = "2026-04-21T20:31:40.092Z" },
 ]
-
-[[package]]
-name = "protein-membrane-md"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "mypy" },
-    { name = "openmm" },
-    { name = "pydantic" },
-    { name = "ruff" },
-]
-
-[package.optional-dependencies]
-amd = [
-    { name = "openmm-hip-7" },
-]
-nvidia = [
-    { name = "openmm-cuda-12" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pre-commit" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "openmm", specifier = "==8.5.0" },
-    { name = "openmm-cuda-12", marker = "extra == 'nvidia'", specifier = "==8.5.0" },
-    { name = "openmm-hip-7", marker = "extra == 'amd'", specifier = "==8.5.0" },
-    { name = "pydantic", specifier = "==2.12.5" },
-    { name = "ruff", specifier = ">=0.15.10" },
-]
-provides-extras = ["amd", "nvidia"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pre-commit", specifier = ">=4.6.0" }]
 
 [[package]]
 name = "pydantic"

@@ -2,11 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from protein_membrane_md.artifacts import RestartResolver, StageArtifacts
+from charmm_gui_md.membrane.profile import MEMBRANE_PROFILE
+from charmm_gui_md.shared.artifacts import RestartResolver, StageArtifacts
+from charmm_gui_md.solution.profile import SOLUTION_PROFILE
+
 
 class RestartResolverTests(unittest.TestCase):
     def test_first_stage_uses_input_adapter_initial_coordinates(self) -> None:
-        resolver = RestartResolver()
+        resolver = RestartResolver(profile=MEMBRANE_PROFILE)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -24,7 +27,7 @@ class RestartResolverTests(unittest.TestCase):
         self.assertEqual(restart_source.description, "initial input coordinates")
 
     def test_later_stage_prefers_previous_state_when_available(self) -> None:
-        resolver = RestartResolver()
+        resolver = RestartResolver(profile=MEMBRANE_PROFILE)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -51,6 +54,28 @@ class RestartResolverTests(unittest.TestCase):
         self.assertEqual(
             restart_source.description,
             "restart from previous protocol stage 'step6.1_equilibration'",
+        )
+
+    def test_solution_profile_uses_solution_stage_order(self) -> None:
+        resolver = RestartResolver(profile=SOLUTION_PROFILE)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            outputs_dir = root / "outputs"
+            restart_source = resolver.resolve(
+                inputs_dir=root / "openmm",
+                outputs_dir=outputs_dir,
+                step_name="step5_production",
+                initial_coordinates_path=root / "openmm" / "step3_input.pdb",
+            )
+
+        self.assertEqual(
+            restart_source.coordinates_path,
+            outputs_dir / "step4_equilibration" / "final_coordinates.pdb",
+        )
+        self.assertEqual(
+            restart_source.description,
+            "restart from previous protocol stage 'step4_equilibration'",
         )
 
 

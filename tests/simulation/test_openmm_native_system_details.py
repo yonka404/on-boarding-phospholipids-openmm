@@ -4,24 +4,52 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
+os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 from openmm import (
     CustomBondForce,
     CustomExternalForce,
     CustomNonbondedForce,
     CustomTorsionForce,
+    MonteCarloBarostat,
+    MonteCarloMembraneBarostat,
     NonbondedForce,
     System,
     Vec3,
 )
 from openmm.unit import angstrom, kilojoule_per_mole, nanometer
 
-from protein_membrane_md.protocols import OpenMMStageProtocol
-from protein_membrane_md.simulation import OpenMMSimulationFactory
+from charmm_gui_md.shared.protocols import OpenMMStageProtocol
+from charmm_gui_md.shared.simulation import OpenMMSimulationFactory
 
 
 class OpenmmNativeSystemDetailTests(unittest.TestCase):
+    def test_pressure_protocols_select_environment_appropriate_barostats(self) -> None:
+        factory = OpenMMSimulationFactory()
+
+        isotropic = factory._build_barostat(
+            _protocol(
+                pressure_coupling=True,
+                pressure_bar=1.0,
+                barostat_kind="isotropic",
+                barostat_interval_steps=25,
+            )
+        )
+        membrane = factory._build_barostat(
+            _protocol(
+                pressure_coupling=True,
+                pressure_bar=1.0,
+                barostat_kind="membrane",
+                membrane_xy_mode_name="XYIsotropic",
+                membrane_z_mode_name="ZFree",
+                surface_tension_dyne_per_cm=0.0,
+                barostat_interval_steps=25,
+            )
+        )
+
+        self.assertIsInstance(isotropic, MonteCarloBarostat)
+        self.assertIsInstance(membrane, MonteCarloMembraneBarostat)
+
     def test_create_applies_charmm_gui_force_switch_vdw(self) -> None:
         factory = OpenMMSimulationFactory()
         psf = _FakePsf(_system_with_nonbonded_force())

@@ -2,13 +2,16 @@
 
 ## Repository Overview
 
-This is a Python/OpenMM scaffold for protein-in-membrane molecular dynamics runs.
+This is a Python/OpenMM scaffold for CHARMM-GUI-generated molecular dynamics
+runs. It supports general solutes in either a membrane or a water-and-salts
+solution.
 
 Important paths:
-- `src/protein_membrane_md/`: package source
-- `src/protein_membrane_md/inputs/`: input format adapters
-- `src/protein_membrane_md/simulation/`: OpenMM setup, platform selection, initialization, and reporters
-- `src/protein_membrane_md/workflows/`: stage and sweep runners
+
+- `src/charmm_gui_md/`: primary package source
+- `src/charmm_gui_md/shared/`: reusable OpenMM input, protocol, simulation, and workflow logic
+- `src/charmm_gui_md/membrane/`: membrane schedule and public workflow API
+- `src/charmm_gui_md/solution/`: solution schedule and public workflow API
 - `mains/`: runnable scripts
 - `tests/`: test suite written with Python's built-in `unittest`; see
   `tests/README.md` for folder organization
@@ -16,15 +19,26 @@ Important paths:
 
 ## Input Data Context
 
-The files under `data/inputs/` come from the CHARMM-GUI web platform, a system builder for preparing molecular dynamics simulations. This repo separates CHARMM-GUI-provided formats into explicit input adapters so each supported format has clear validation and runtime behavior.
+The files under `data/inputs/` come from the CHARMM-GUI web platform, a system
+builder for preparing molecular dynamics simulations. This repo supports only
+CHARMM-GUI's OpenMM-native export format.
 
-The durable input format folders are `data/inputs/charmmgui/` and `data/inputs/openmm_native/`. These are the CHARMM-GUI exports expected to be most compatible with this Python/OpenMM project. Prefer the native OpenMM format as the default runtime input format when both formats are available.
+OpenMM-native systems are grouped by system kind and system ID, for example
+`data/inputs/openmm_native/membrane/ligand_membrane/` and
+`data/inputs/openmm_native/solution/abeta_40/`.
 
-CHARMM-GUI can also export files for NAMD, GROMACS, TINKER, and other engines. Those formats are not expected to be used in this repo because they are less directly compatible with an OpenMM-focused Python workflow. Do not add support for them unless the user explicitly asks for it.
+CHARMM-GUI can also export raw CHARMM files and files for NAMD, GROMACS,
+TINKER, and other engines. Those formats are not expected to be used in this
+repo because they are less directly compatible with an OpenMM-focused Python
+workflow. Do not add support for them unless the user explicitly asks for it.
 
-The `data/outputs/` directory should mirror the `data/inputs/` format structure. Results produced from `data/inputs/openmm_native/` should be written under `data/outputs/openmm_native/`; results produced from `data/inputs/charmmgui/` should be written under `data/outputs/charmmgui/`. Preserve that mapping so simulation results can be traced back to the input format that generated them.
+The `data/outputs/` directory should mirror the `data/inputs/` format, system
+kind, and system ID structure. Preserve that mapping so simulation results can
+be traced back to the input system that generated them.
 
-Input directory validation is implemented with Pydantic in `src/protein_membrane_md/inputs/`. Preserve or extend those validation models when changing expected input files or formats.
+Input directory validation is implemented with Pydantic in
+`src/charmm_gui_md/shared/inputs/`. Preserve or extend those validation models
+when changing expected input files or formats.
 
 ## Environment
 

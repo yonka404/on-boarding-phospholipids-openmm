@@ -1,48 +1,38 @@
 import os
 
-os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
+os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
+import tempfile
 import unittest
 from pathlib import Path
 
-from protein_membrane_md.protocols import OpenMMStageProtocol
+from charmm_gui_md.shared.protocols import OpenMMStageProtocol
+
+
+MEMBRANE_OPENMM_DIR = Path(
+    "data/inputs/openmm_native/membrane/ligand_membrane/openmm"
+)
+SOLUTION_OPENMM_DIR = Path("data/inputs/openmm_native/solution/abeta_40/openmm")
 
 
 class OpenMMStageProtocolTests(unittest.TestCase):
-    def test_from_file_reads_charmm_gui_langevin_stage(self) -> None:
-        protocol = OpenMMStageProtocol.from_file(
-            step_name="step6.1_equilibration",
-            protocol_path=Path("data/inputs/charmmgui/step6.1_equilibration.inp"),
-        )
+    def test_from_file_rejects_raw_charmm_protocol_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            protocol_path = Path(tmpdir) / "stage.inp"
+            protocol_path.write_text(
+                "dyna start nstep 125000 timestp 0.001 finalt 303.15\n"
+            )
 
-        self.assertEqual(protocol.dynamics_steps, 125000)
-        self.assertEqual(protocol.minimization_steps, 3000)
-        self.assertTrue(protocol.generate_velocities)
-        self.assertEqual(protocol.timestep_ps, 0.001)
-        self.assertEqual(protocol.trajectory_report_interval_steps, 5000)
-        self.assertEqual(protocol.switch_distance_nm, 1.0)
-        self.assertEqual(protocol.cutoff_distance_nm, 1.2)
-        self.assertFalse(protocol.pressure_coupling)
-
-    def test_from_file_reads_charmm_gui_membrane_pressure_stage(self) -> None:
-        protocol = OpenMMStageProtocol.from_file(
-            step_name="step6.3_equilibration",
-            protocol_path=Path("data/inputs/charmmgui/step6.3_equilibration.inp"),
-        )
-
-        self.assertEqual(protocol.dynamics_steps, 125000)
-        self.assertFalse(protocol.generate_velocities)
-        self.assertTrue(protocol.pressure_coupling)
-        self.assertEqual(protocol.barostat_kind, "membrane")
-        self.assertEqual(protocol.pressure_bar, 1.0)
-        self.assertEqual(protocol.barostat_interval_steps, 15)
+            with self.assertRaisesRegex(ValueError, r"Missing integer protocol field"):
+                OpenMMStageProtocol.from_file(
+                    step_name="stage",
+                    protocol_path=protocol_path,
+                )
 
     def test_from_file_reads_openmm_native_restraint_fields(self) -> None:
         protocol = OpenMMStageProtocol.from_file(
             step_name="step6.1_equilibration",
-            protocol_path=Path(
-                "data/inputs/openmm_native/openmm/step6.1_equilibration.inp"
-            ),
+            protocol_path=MEMBRANE_OPENMM_DIR / "step6.1_equilibration.inp",
         )
 
         self.assertEqual(protocol.coulomb_method_name, "PME")
@@ -57,9 +47,7 @@ class OpenMMStageProtocolTests(unittest.TestCase):
     def test_from_file_defaults_missing_openmm_native_restraint_constants(self) -> None:
         protocol = OpenMMStageProtocol.from_file(
             step_name="step6.6_equilibration",
-            protocol_path=Path(
-                "data/inputs/openmm_native/openmm/step6.6_equilibration.inp"
-            ),
+            protocol_path=MEMBRANE_OPENMM_DIR / "step6.6_equilibration.inp",
         )
 
         self.assertTrue(protocol.restraints_enabled)
@@ -72,7 +60,7 @@ class OpenMMStageProtocolTests(unittest.TestCase):
     def test_from_file_reads_openmm_native_restraints_disabled(self) -> None:
         protocol = OpenMMStageProtocol.from_file(
             step_name="step7_production",
-            protocol_path=Path("data/inputs/openmm_native/openmm/step7_production.inp"),
+            protocol_path=MEMBRANE_OPENMM_DIR / "step7_production.inp",
         )
 
         self.assertFalse(protocol.restraints_enabled)
@@ -115,7 +103,11 @@ class OpenMMStageProtocolTests(unittest.TestCase):
             "fc_cdih": ("carbohydrate_dihedral_restraint_kj_mol_rad2", float),
         }
 
-        for protocol_path in sorted(Path("data/inputs/openmm_native/openmm").glob("step*.inp")):
+        protocol_paths = (
+            *sorted(MEMBRANE_OPENMM_DIR.glob("step*.inp")),
+            *sorted(SOLUTION_OPENMM_DIR.glob("step*.inp")),
+        )
+        for protocol_path in protocol_paths:
             with self.subTest(protocol_path=protocol_path):
                 assignments = _assignment_values(protocol_path)
                 protocol = OpenMMStageProtocol.from_file(
@@ -132,6 +124,28 @@ class OpenMMStageProtocolTests(unittest.TestCase):
                         converter(assignments[key]),
                         f"{protocol_path.name} {key}",
                     )
+
+    def test_from_file_reads_solution_equilibration_restraints(self) -> None:
+        protocol = OpenMMStageProtocol.from_file(
+            step_name="step4_equilibration",
+            protocol_path=SOLUTION_OPENMM_DIR / "step4_equilibration.inp",
+        )
+
+        self.assertTrue(protocol.restraints_enabled)
+        self.assertEqual(protocol.protein_backbone_restraint_kj_mol_nm2, 400.0)
+        self.assertEqual(protocol.protein_side_chain_restraint_kj_mol_nm2, 40.0)
+        self.assertFalse(protocol.pressure_coupling)
+
+    def test_from_file_reads_solution_isotropic_pressure_stage(self) -> None:
+        protocol = OpenMMStageProtocol.from_file(
+            step_name="step5_production",
+            protocol_path=SOLUTION_OPENMM_DIR / "step5_production.inp",
+        )
+
+        self.assertFalse(protocol.restraints_enabled)
+        self.assertTrue(protocol.pressure_coupling)
+        self.assertEqual(protocol.barostat_kind, "isotropic")
+        self.assertEqual(protocol.pressure_bar, 1.0)
 
 
 def _assignment_values(path: Path) -> dict[str, str]:

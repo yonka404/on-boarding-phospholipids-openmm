@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/protein-membrane-md.iml" filepath="$PROJECT_DIR$/.idea/protein-membrane-md.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/charmm-gui-md.iml" filepath="$PROJECT_DIR$/.idea/charmm-gui-md.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/protein-membrane-md@1.iml" filepath="$PROJECT_DIR$/.idea/protein-membrane-md@1.iml" />
     </modules>
   </component>

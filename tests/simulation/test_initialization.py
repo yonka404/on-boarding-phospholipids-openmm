@@ -3,15 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
+os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 from openmm import CustomExternalForce, Platform, System, Vec3, VerletIntegrator
 from openmm.app import Element, Simulation, Topology
 from openmm.unit import nanometer, picosecond
 
-from protein_membrane_md.artifacts import RestartSource
-from protein_membrane_md.protocols import OpenMMStageProtocol
-from protein_membrane_md.simulation.initialization import SimulationInitializer
+from charmm_gui_md.shared.artifacts import RestartSource
+from charmm_gui_md.shared.protocols import OpenMMStageProtocol
+from charmm_gui_md.shared.simulation.initialization import SimulationInitializer
 
 
 class SimulationInitializerTests(unittest.TestCase):

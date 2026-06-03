@@ -1,7 +1,7 @@
 [project]
-name = "protein-membrane-md"
+name = "charmm-gui-md"
 version = "0.1.0"
-description = "Python/OpenMM scaffold for protein-in-membrane MD runs"
+description = "Python/OpenMM scaffold for CHARMM-GUI membrane and solution MD runs"
 requires-python = ">=3.12.10"
 dependencies = [
     "openmm==8.5.0",

@@ -4,8 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from protein_membrane_md.artifacts import StageArtifacts
-from protein_membrane_md.simulation.outputs import StageOutputWriter
+from charmm_gui_md.shared.artifacts import StageArtifacts
+from charmm_gui_md.shared.simulation.outputs import StageOutputWriter
 
 
 class StageOutputWriterTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class StageOutputWriterTests(unittest.TestCase):
             simulation.context.getState.return_value = state
 
             with mock.patch(
-                "protein_membrane_md.simulation.outputs.PDBFile.writeFile",
+                "charmm_gui_md.shared.simulation.outputs.PDBFile.writeFile",
             ) as write_file:
                 StageOutputWriter().write(
                     simulation,

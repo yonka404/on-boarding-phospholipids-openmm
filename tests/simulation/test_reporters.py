@@ -4,8 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from protein_membrane_md.artifacts import StageArtifacts
-from protein_membrane_md.simulation.reporters import StageReporterInstaller
+from charmm_gui_md.shared.artifacts import StageArtifacts
+from charmm_gui_md.shared.simulation.reporters import StageReporterInstaller
 
 
 class StageReporterInstallerTests(unittest.TestCase):
@@ -21,11 +21,11 @@ class StageReporterInstallerTests(unittest.TestCase):
 
             with (
                 mock.patch(
-                    "protein_membrane_md.simulation.reporters.StateDataReporter",
+                    "charmm_gui_md.shared.simulation.reporters.StateDataReporter",
                     return_value="state-reporter",
                 ),
                 mock.patch(
-                    "protein_membrane_md.simulation.reporters.DCDReporter",
+                    "charmm_gui_md.shared.simulation.reporters.DCDReporter",
                     return_value="dcd-reporter",
                 ) as dcd_reporter,
             ):

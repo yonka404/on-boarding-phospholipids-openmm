@@ -1,11 +1,11 @@
 import os
 
-os.environ["MEMBRANE_OPENMM_SKIP_BOOTSTRAP"] = "1"
+os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 import unittest
 from unittest import mock
 
-from protein_membrane_md.simulation import OpenMMSimulationFactory
+from charmm_gui_md.shared.simulation import OpenMMSimulationFactory
 
 
 class SimulationPlatformFallbackTests(unittest.TestCase):
@@ -23,11 +23,11 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "protein_membrane_md.simulation.factory.Platform.getPlatformByName",
+                "charmm_gui_md.shared.simulation.factory.Platform.getPlatformByName",
                 side_effect=platform_lookup,
             ) as get_platform,
             mock.patch(
-                "protein_membrane_md.simulation.factory.Simulation",
+                "charmm_gui_md.shared.simulation.factory.Simulation",
                 return_value=created_simulation,
             ) as simulation_ctor,
             mock.patch.object(factory, "_log_selected_platform"),

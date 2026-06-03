@@ -9,6 +9,8 @@ from charmm_gui_md.shared.profile import SystemProfile
 from charmm_gui_md.shared.protocols import OpenMMStageProtocol
 
 
+# TODO: This class should not be shared because the input files depend on the charmmgui system itself and
+# will probably be different for membranes and solutions and others
 class OpenMMNativeFiles(BaseModel):
     """Validated CHARMM-GUI OpenMM-native files needed for an OpenMM run."""
 

@@ -1,8 +1,10 @@
 import inspect
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from charmm_gui_md.shared.artifacts import StageArtifacts
 from charmm_gui_md.shared.workflows import StageRunner, SweepRunner
 from charmm_gui_md.solution.profile import SOLUTION_PROFILE
 
@@ -50,6 +52,32 @@ class RunnerApiTests(unittest.TestCase):
                     step_name="step5_production",
                 ),
             ],
+        )
+
+    def test_solution_sweep_skips_completed_stage_before_interrupted_stage(self) -> None:
+        stage_runner = mock.Mock()
+        runner = SweepRunner(
+            profile=SOLUTION_PROFILE,
+            stage_runner=stage_runner,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs_dir = Path(tmpdir)
+            completed = StageArtifacts.for_stage(outputs_dir, "step4_equilibration")
+            completed.create_directory()
+            completed.final_state_path.write_text("<state />")
+            completed.final_coordinates_path.write_text("ATOM")
+
+            interrupted = StageArtifacts.for_stage(outputs_dir, "step5_production")
+            interrupted.create_directory()
+            interrupted.checkpoint_path.write_bytes(b"checkpoint")
+
+            runner.run(inputs_dir=Path("inputs"), outputs_dir=outputs_dir)
+
+        stage_runner.run.assert_called_once_with(
+            inputs_dir=Path("inputs"),
+            outputs_dir=outputs_dir,
+            step_name="step5_production",
         )
 
 

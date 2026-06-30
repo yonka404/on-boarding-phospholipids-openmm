@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+from charmm_gui_md.shared.artifacts import StageArtifacts
 from charmm_gui_md.shared.profile import SystemProfile
 from charmm_gui_md.shared.workflows.stage_runner import StageRunner
 
@@ -22,6 +23,14 @@ class SweepRunner:
         outputs_dir: Path,
     ) -> None:
         for step_name in self.profile.protocol_schedule.stage_names:
+            artifacts = StageArtifacts.for_stage(outputs_dir, step_name)
+            if artifacts.is_complete and not artifacts.checkpoint_path.is_file():
+                logger.info(
+                    "Skipping completed stage %s; final state and coordinates exist",
+                    step_name,
+                )
+                continue
+
             logger.info("Running %s", step_name)
             self.stage_runner.run(
                 inputs_dir=inputs_dir,

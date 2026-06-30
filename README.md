@@ -80,6 +80,19 @@ uv run python mains/run_solution_sweep.py abeta_40
 
 ## Runtime Notes
 
+- Every stage writes `checkpoint.chk` in its output directory at the same
+  interval as trajectory frames. OpenMM replaces this file atomically, so a
+  crash can lose at most one trajectory-reporting interval of computation.
+- Rerun the same single-step command after a crash to load the checkpoint,
+  append to `state_data.csv` and `trajectory.dcd`, and run only the remaining
+  steps. Rerunning a sweep also skips completed stages before resuming the
+  interrupted stage.
+- A checkpoint is removed only after `final_state.xml` and
+  `final_coordinates.pdb` are written successfully. If checkpoint loading
+  fails, the run stops without overwriting partial outputs.
+- Binary checkpoints require the same system definition, OpenMM version,
+  platform, and hardware. They are intended for continuing on the same PC;
+  completed stages continue to use the more portable `final_state.xml`.
 - On Linux AMD hosts with ROCm installed, the package preloads the HIP runtime
   before OpenMM import so `HIP` can be used when available.
 - On NVIDIA hosts, normal OpenMM `CUDA` selection remains unchanged.

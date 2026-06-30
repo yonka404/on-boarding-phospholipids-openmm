@@ -5,6 +5,7 @@ from charmm_gui_md.shared.profile import SystemProfile
 
 FINAL_COORDINATES_FILENAME = "final_coordinates.pdb"
 FINAL_STATE_FILENAME = "final_state.xml"
+CHECKPOINT_FILENAME = "checkpoint.chk"
 STATE_DATA_FILENAME = "state_data.csv"
 TRAJECTORY_FILENAME = "trajectory.dcd"
 
@@ -31,6 +32,14 @@ class StageArtifacts:
     @property
     def final_state_path(self) -> Path:
         return self.output_dir / FINAL_STATE_FILENAME
+
+    @property
+    def checkpoint_path(self) -> Path:
+        return self.output_dir / CHECKPOINT_FILENAME
+
+    @property
+    def is_complete(self) -> bool:
+        return self.final_state_path.is_file() and self.final_coordinates_path.is_file()
 
     @property
     def state_data_path(self) -> Path:

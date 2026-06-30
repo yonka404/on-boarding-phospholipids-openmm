@@ -8,6 +8,22 @@ from charmm_gui_md.solution.profile import SOLUTION_PROFILE
 
 
 class RestartResolverTests(unittest.TestCase):
+    def test_stage_artifacts_expose_checkpoint_and_completion_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifacts = StageArtifacts.for_stage(Path(tmpdir), "step5_production")
+            artifacts.create_directory()
+
+            self.assertEqual(
+                artifacts.checkpoint_path,
+                artifacts.output_dir / "checkpoint.chk",
+            )
+            self.assertFalse(artifacts.is_complete)
+
+            artifacts.final_state_path.write_text("<state />")
+            artifacts.final_coordinates_path.write_text("ATOM")
+
+            self.assertTrue(artifacts.is_complete)
+
     def test_first_stage_uses_input_adapter_initial_coordinates(self) -> None:
         resolver = RestartResolver(profile=MEMBRANE_PROFILE)
 

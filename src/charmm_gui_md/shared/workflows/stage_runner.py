@@ -10,6 +10,7 @@ from charmm_gui_md.shared.protocols import OpenMMStageProtocol
 from charmm_gui_md.shared.simulation import (
     OpenMMSimulationFactory,
     SimulationInitializer,
+    StageCheckpointManager,
     StageOutputWriter,
     StageReporterInstaller,
 )
@@ -26,6 +27,7 @@ class StageRunner:
         simulation_initializer: SimulationInitializer | None = None,
         reporter_installer: StageReporterInstaller | None = None,
         output_writer: StageOutputWriter | None = None,
+        checkpoint_manager: StageCheckpointManager | None = None,
     ) -> None:
         self.profile = profile
         self.restart_resolver = restart_resolver or RestartResolver(profile=profile)
@@ -33,6 +35,7 @@ class StageRunner:
         self.simulation_initializer = simulation_initializer or SimulationInitializer()
         self.reporter_installer = reporter_installer or StageReporterInstaller()
         self.output_writer = output_writer or StageOutputWriter()
+        self.checkpoint_manager = checkpoint_manager or StageCheckpointManager()
 
     def run(
         self,
@@ -54,17 +57,28 @@ class StageRunner:
         artifacts = StageArtifacts.for_stage(outputs_dir, step_name)
         artifacts.create_directory()
 
-        restart_source = self.restart_resolver.resolve(
-            inputs_dir=files.inputs_dir,
-            outputs_dir=outputs_dir,
-            step_name=step_name,
-            initial_coordinates_path=files.initial_coordinates_path,
+        simulation = self.simulation_factory.create(files, protocol)
+        checkpoint_remaining_steps = self.checkpoint_manager.restore(
+            simulation,
+            artifacts,
+            protocol,
         )
 
-        simulation = self.simulation_factory.create(files, protocol)
-        self.simulation_initializer.initialize(simulation, restart_source, protocol)
+        if checkpoint_remaining_steps is None:
+            resumed = False
+            restart_source = self.restart_resolver.resolve(
+                inputs_dir=files.inputs_dir,
+                outputs_dir=outputs_dir,
+                step_name=step_name,
+                initial_coordinates_path=files.initial_coordinates_path,
+            )
+            self.simulation_initializer.initialize(simulation, restart_source, protocol)
+            remaining_steps = protocol.dynamics_steps
+        else:
+            resumed = True
+            remaining_steps = checkpoint_remaining_steps
 
-        if protocol.has_minimization:
+        if not resumed and protocol.has_minimization:
             logger.info(
                 "[%s] Minimizing with tolerance %.2f kJ/mol/nm for up to %d iterations",
                 protocol.step_name,
@@ -79,15 +93,23 @@ class StageRunner:
             )
             logger.info("[%s] Minimization complete", protocol.step_name)
 
-        self.reporter_installer.install(simulation, artifacts, protocol)
+        self.reporter_installer.install(
+            simulation,
+            artifacts,
+            protocol,
+            append=resumed,
+        )
 
         logger.info(
-            "[%s] Running %d MD steps with dt %.4f ps",
+            "[%s] Running %d remaining MD steps with dt %.4f ps",
             protocol.step_name,
-            protocol.dynamics_steps,
+            remaining_steps,
             protocol.timestep_ps,
         )
-        simulation.step(protocol.dynamics_steps)
+        if remaining_steps > 0:
+            simulation.step(remaining_steps)
         logger.info("[%s] Dynamics complete", protocol.step_name)
 
-        return self.output_writer.write(simulation, artifacts, protocol)
+        result = self.output_writer.write(simulation, artifacts, protocol)
+        self.checkpoint_manager.clear(artifacts, protocol)
+        return result

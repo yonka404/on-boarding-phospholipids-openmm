@@ -42,9 +42,7 @@ class SimulationInitializer:
             restart_source.coordinates_path,
         )
 
-        self._initialize_velocities(simulation, protocol)
-
-    def _initialize_velocities(
+    def initialize_velocities(
         self,
         simulation: Simulation,
         protocol: OpenMMStageProtocol,

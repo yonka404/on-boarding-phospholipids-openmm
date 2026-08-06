@@ -69,6 +69,7 @@ class StageRunnerCheckpointTests(unittest.TestCase):
                 )
 
         self.simulation_initializer.initialize.assert_not_called()
+        self.simulation_initializer.initialize_velocities.assert_not_called()
         self.restart_resolver.resolve.assert_not_called()
         self.simulation.minimizeEnergy.assert_not_called()
         self.reporter_installer.install.assert_called_once_with(
@@ -84,9 +85,110 @@ class StageRunnerCheckpointTests(unittest.TestCase):
         )
         self.assertEqual(result, expected_result)
 
-    def test_fresh_run_initializes_minimizes_and_runs_full_stage(self) -> None:
+    def test_coordinate_start_initializes_velocities_after_minimization(self) -> None:
         self.checkpoint_manager.restore.return_value = None
-        restart_source = mock.Mock()
+        restart_source = SimpleNamespace(state_path=None)
+        self.restart_resolver.resolve.return_value = restart_source
+        lifecycle_events: list[str] = []
+        self.simulation_initializer.initialize.side_effect = (
+            lambda *_: lifecycle_events.append("initialize")
+        )
+        self.simulation.minimizeEnergy.side_effect = (
+            lambda **_: lifecycle_events.append("minimize")
+        )
+        self.simulation_initializer.initialize_velocities.side_effect = (
+            lambda *_: lifecycle_events.append("initialize_velocities")
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs_dir = Path(tmpdir)
+            artifacts = StageArtifacts.for_stage(outputs_dir, "step5_production")
+            self.output_writer.write.return_value = artifacts.final_coordinates_path
+
+            with (
+                mock.patch(
+                    "charmm_gui_md.shared.workflows.stage_runner.OpenMMNativeFiles.from_root",
+                    return_value=self.files,
+                ),
+                mock.patch(
+                    "charmm_gui_md.shared.workflows.stage_runner.OpenMMStageProtocol.from_file",
+                    return_value=self.protocol,
+                ),
+            ):
+                self._runner().run(
+                    inputs_dir=Path("inputs"),
+                    outputs_dir=outputs_dir,
+                    step_name="step5_production",
+                )
+
+        self.simulation_initializer.initialize.assert_called_once_with(
+            self.simulation,
+            restart_source,
+            self.protocol,
+        )
+        self.simulation_initializer.initialize_velocities.assert_called_once_with(
+            self.simulation,
+            self.protocol,
+        )
+        self.simulation.minimizeEnergy.assert_called_once()
+        self.assertEqual(
+            lifecycle_events,
+            ["initialize", "minimize", "initialize_velocities"],
+        )
+        self.reporter_installer.install.assert_called_once_with(
+            self.simulation,
+            artifacts,
+            self.protocol,
+            append=False,
+        )
+        self.simulation.step.assert_called_once_with(100)
+
+    def test_coordinate_start_without_minimization_initializes_velocities_before_dynamics(
+        self,
+    ) -> None:
+        self.checkpoint_manager.restore.return_value = None
+        self.protocol.has_minimization = False
+        restart_source = SimpleNamespace(state_path=None)
+        self.restart_resolver.resolve.return_value = restart_source
+        lifecycle_events: list[str] = []
+        self.simulation_initializer.initialize.side_effect = (
+            lambda *_: lifecycle_events.append("initialize")
+        )
+        self.simulation_initializer.initialize_velocities.side_effect = (
+            lambda *_: lifecycle_events.append("initialize_velocities")
+        )
+        self.simulation.step.side_effect = lambda *_: lifecycle_events.append("step")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs_dir = Path(tmpdir)
+            artifacts = StageArtifacts.for_stage(outputs_dir, "step5_production")
+            self.output_writer.write.return_value = artifacts.final_coordinates_path
+
+            with (
+                mock.patch(
+                    "charmm_gui_md.shared.workflows.stage_runner.OpenMMNativeFiles.from_root",
+                    return_value=self.files,
+                ),
+                mock.patch(
+                    "charmm_gui_md.shared.workflows.stage_runner.OpenMMStageProtocol.from_file",
+                    return_value=self.protocol,
+                ),
+            ):
+                self._runner().run(
+                    inputs_dir=Path("inputs"),
+                    outputs_dir=outputs_dir,
+                    step_name="step5_production",
+                )
+
+        self.simulation.minimizeEnergy.assert_not_called()
+        self.assertEqual(
+            lifecycle_events,
+            ["initialize", "initialize_velocities", "step"],
+        )
+
+    def test_dynamic_state_start_preserves_loaded_velocities(self) -> None:
+        self.checkpoint_manager.restore.return_value = None
+        restart_source = SimpleNamespace(state_path=Path("previous_state.xml"))
         self.restart_resolver.resolve.return_value = restart_source
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -115,14 +217,7 @@ class StageRunnerCheckpointTests(unittest.TestCase):
             restart_source,
             self.protocol,
         )
-        self.simulation.minimizeEnergy.assert_called_once()
-        self.reporter_installer.install.assert_called_once_with(
-            self.simulation,
-            artifacts,
-            self.protocol,
-            append=False,
-        )
-        self.simulation.step.assert_called_once_with(100)
+        self.simulation_initializer.initialize_velocities.assert_not_called()
 
     def test_completed_checkpoint_writes_outputs_without_zero_step_call(self) -> None:
         self.checkpoint_manager.restore.return_value = 0

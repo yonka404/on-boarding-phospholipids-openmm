@@ -72,10 +72,12 @@ class StageRunner:
                 step_name=step_name,
                 initial_coordinates_path=files.initial_coordinates_path,
             )
+            needs_velocity_initialization = restart_source.state_path is None
             self.simulation_initializer.initialize(simulation, restart_source, protocol)
             remaining_steps = protocol.dynamics_steps
         else:
             resumed = True
+            needs_velocity_initialization = False
             remaining_steps = checkpoint_remaining_steps
 
         if not resumed and protocol.has_minimization:
@@ -92,6 +94,11 @@ class StageRunner:
                 maxIterations=protocol.minimization_steps,
             )
             logger.info("[%s] Minimization complete", protocol.step_name)
+
+        if needs_velocity_initialization:
+            # CHARMM-GUI draws velocities after constrained coordinates are minimized;
+            # doing it before minimization can destabilize the first integration step.
+            self.simulation_initializer.initialize_velocities(simulation, protocol)
 
         self.reporter_installer.install(
             simulation,

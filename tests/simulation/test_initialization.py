@@ -1,13 +1,15 @@
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 from openmm import CustomExternalForce, Platform, System, Vec3, VerletIntegrator
-from openmm.app import Element, Simulation, Topology
-from openmm.unit import nanometer, picosecond
+from openmm.app import Element, PDBFile, Simulation, Topology
+from openmm.unit import kelvin, nanometer, picosecond
 
 from charmm_gui_md.shared.artifacts import RestartSource
 from charmm_gui_md.shared.protocols import OpenMMStageProtocol
@@ -15,6 +17,72 @@ from charmm_gui_md.shared.simulation.initialization import SimulationInitializer
 
 
 class SimulationInitializerTests(unittest.TestCase):
+    def test_coordinate_initialization_preserves_velocities_until_explicit_phase(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            coordinates_path = Path(tmpdir) / "coordinates.pdb"
+            simulation = _simulation_with_parameters({})
+            with coordinates_path.open("w") as handle:
+                PDBFile.writeFile(
+                    simulation.topology,
+                    [Vec3(1.0, 2.0, 3.0)] * nanometer,
+                    handle,
+                )
+
+            simulation.context.setPositions([Vec3(0.0, 0.0, 0.0)] * nanometer)
+            simulation.context.setVelocities(
+                [Vec3(0.1, 0.2, 0.3)] * nanometer / picosecond,
+            )
+
+            SimulationInitializer().initialize(
+                simulation,
+                RestartSource(
+                    coordinates_path=coordinates_path,
+                    state_path=None,
+                    description="initial input coordinates",
+                ),
+                _protocol(),
+            )
+
+        state = simulation.context.getState(getPositions=True, getVelocities=True)
+        self.assertEqual(
+            state.getPositions(asNumpy=True).value_in_unit(nanometer).tolist(),
+            [[1.0, 2.0, 3.0]],
+        )
+        self.assertEqual(
+            state.getVelocities(asNumpy=True)
+            .value_in_unit(nanometer / picosecond)
+            .tolist(),
+            [[0.1, 0.2, 0.3]],
+        )
+
+    def test_velocity_initialization_uses_generation_temperature(self) -> None:
+        simulation = mock.Mock()
+        protocol = replace(
+            _protocol(),
+            generate_velocities=True,
+            velocity_temperature_kelvin=250.0,
+        )
+
+        SimulationInitializer().initialize_velocities(simulation, protocol)
+
+        simulation.context.setVelocitiesToTemperature.assert_called_once_with(
+            250.0 * kelvin,
+        )
+
+    def test_velocity_initialization_falls_back_to_stage_temperature(self) -> None:
+        simulation = mock.Mock()
+
+        SimulationInitializer().initialize_velocities(
+            simulation,
+            _protocol(),
+        )
+
+        simulation.context.setVelocitiesToTemperature.assert_called_once_with(
+            303.15 * kelvin,
+        )
+
     def test_restart_state_keeps_new_stage_context_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "final_state.xml"

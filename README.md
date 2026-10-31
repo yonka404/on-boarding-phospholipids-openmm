@@ -78,6 +78,70 @@ uv run python mains/run_solution_single_step.py abeta_40 step4_equilibration
 uv run python mains/run_solution_sweep.py abeta_40
 ```
 
+## SIMCALC GPU jobs
+
+Upload the project scripts and the selected system's input bundle to SIMCALC,
+and install the project's NVIDIA environment in its shared `.venv` first. From
+the project directory on the SIMCALC login node, check a new replica with:
+
+```bash
+bash simcalc/main.sh --check-only abeta42_7q4m_8bfa_replica_2
+```
+
+Then submit it by leaving out `--check-only`:
+
+```bash
+bash simcalc/main.sh abeta42_7q4m_8bfa_replica_2
+```
+
+The system name selects matching input and output directories under
+`data/inputs/openmm_native/solution/` and `data/outputs/openmm_native/solution/`.
+The launcher refuses existing output, execution locks, and an already queued
+or running job for that system. It starts fresh runs only; it never deletes
+results or stale locks, resumes a checkpoint, or installs packages automatically.
+If a job is interrupted, inspect its log and checkpoint before recovering it.
+
+Before submission, the launcher checks files, writable destinations, Slurm
+connectivity, and resource capacity. `--check-only` runs these checks and asks
+Slurm for an estimate without submitting a job; it can create parent/log
+directories and temporary write probes. Reported filesystem space does not
+establish your account's quota or guarantee enough space for the whole run.
+
+Slurm chooses a GPU node with one GPU, four CPU cores, 16 GB of system RAM, and
+up to seven days of elapsed time. Busy nodes remain eligible: the job queues
+normally, and an unavailable start estimate is not a submission failure. Nodes
+marked down, drained, failed, unknown, or under maintenance are excluded from
+the early capacity check. The job continues after you disconnect. Slurm stores
+the submitted batch script, but jobs read helpers and Python code from the
+shared project directory: avoid editing those files while jobs are queued or
+running. Previously submitted standalone scripts, such as job 203, do not use
+the new helpers.
+
+Once allocated, the job checks glibc 2.34 or newer, the shared Python environment,
+and visibility of the allocated GPU. The existing simulation workflow validates
+the input bundle and initializes CUDA for each real stage before creating its
+output directory; there is no separate test simulation. CUDA is mandatory; CPU
+cores still handle preparation and coordination. Logs are saved as
+`simcalc/logs/SYSTEM_ID-JOB_ID.log`. The launcher
+prints the job ID and commands for checking its status and reading its log.
+
+### Submit from PyCharm
+
+Upload the updated `simcalc` folder through your existing Deployment connection.
+Under **Settings → Tools → Remote SSH External Tools**, add or update the tool:
+
+| Field | Value |
+| --- | --- |
+| Program | `/bin/bash` |
+| Arguments | `/nfs/carlos/on-boarding-phospholipids-openmm/simcalc/main.sh abeta42_7q4m_8bfa_replica_2` |
+| Working directory | `/nfs/carlos/on-boarding-phospholipids-openmm` |
+| SSH configuration | Your existing SIMCALC connection |
+
+Enable **Open console for tool output**. Run it from **Tools → Remote Tools**;
+SSH connection or authentication failures appear in PyCharm. To check without
+submitting, put `--check-only` before the system name in Arguments. For another
+replica, upload its input bundle and change the system name.
+
 ## Runtime Notes
 
 - Every stage writes `checkpoint.chk` in its output directory at the same

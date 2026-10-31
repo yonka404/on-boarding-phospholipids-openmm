@@ -1,67 +1,53 @@
 #!/bin/bash -l
-# Submit from the SIMCALC project directory:
-# sbatch simcalc/run_solution.slurm abeta42_7q4m_8bfa_replica_2
-
-# Slurm settings: one GPU, four CPU cores and 16 GB RAM on nvdfen3.
-# Keep these directives above all executable commands.
+# Submit with: bash simcalc/main.sh SYSTEM_ID
+# Slurm chooses a GPU node. These directives must precede executable commands.
 #SBATCH --job-name=solution-md
 #SBATCH --partition=gpu
-#SBATCH --nodelist=nvdfen3
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
-# Maximum elapsed time: seven days. %j below becomes the job number.
+# Seven days of elapsed time; %j becomes the job number.
 #SBATCH --time=7-00:00:00
 #SBATCH --output=solution-md-%j.log
 
-# Stop on unhandled command failures, including failures inside pipelines.
 set -eo pipefail
-
-# Read the first argument and require a single, safe directory name.
-system_id=${1:-}
-if [[ $# -ne 1 || -z "$system_id" || "$system_id" == . || "$system_id" == .. || "$system_id" == *[!a-zA-Z0-9_.-]* ]]; then
-    echo "Usage: sbatch simcalc/run_solution.slurm SYSTEM_ID" >&2
+[[ ${SLURM_JOB_ID:-} =~ ^[0-9]+$ && -n ${SLURM_SUBMIT_DIR:-} ]] || {
+    echo "ERROR: Submit through simcalc/main.sh; this script needs a Slurm allocation." >&2
     exit 1
+}
+project_root=$SLURM_SUBMIT_DIR
+cd -- "$project_root"
+source "$project_root/simcalc/common.sh"
+simcalc_check_name "$@"
+simcalc_paths "$1"
+
+# Files may have changed while queued. Check again before touching replica output.
+simcalc_check_files
+simcalc_check_fresh
+simcalc_check_writable
+mkdir -- "$execution_lock" || simcalc_error "Could not acquire execution lock: $execution_lock. Check for another job."
+trap 'rmdir -- "$execution_lock" || echo "WARNING: Could not remove execution lock: $execution_lock" >&2' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+simcalc_check_output
+
+# The pinned OpenMM Linux wheels require glibc 2.34 or newer.
+libc=$(getconf GNU_LIBC_VERSION) || simcalc_error "Cannot determine node glibc version."
+if [[ $libc =~ ^glibc\ ([0-9]+)\.([0-9]+) ]]; then
+    (( BASH_REMATCH[1] > 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] >= 34) )) ||
+        simcalc_error "Node has $libc; OpenMM requires glibc 2.34+. Ask SIMCALC support about this node."
+else
+    simcalc_error "Unsupported node C library: $libc."
 fi
 
-# Resolve all relative paths from the remote project directory.
-cd /nfs/carlos/on-boarding-phospholipids-openmm
-
-# Use separate inputs and outputs for the selected replica.
-input_dir="data/inputs/openmm_native/solution/$system_id"
-output_root="data/outputs/openmm_native/solution"
-output_dir="$output_root/$system_id"
-lock_dir="$output_root/.$system_id.lock"
-
-# Check that both input directories exist before starting.
-if [[ ! -d "$input_dir/openmm" || ! -d "$input_dir/toppar" ]]; then
-    echo "Missing input directories for $system_id: $input_dir" >&2
-    exit 1
-fi
-
-# Create missing parent folders; use a lock to prevent overlapping jobs.
-mkdir -p "$output_root"
-if ! mkdir "$lock_dir"; then
-    echo "Another job may be running for $system_id (lock: $lock_dir)." >&2
-    exit 1
-fi
-
-# Remove the lock on exit. A forced kill can leave it behind;
-# check that no job is running before removing a leftover lock manually.
-trap 'rmdir "$lock_dir"' EXIT
-
-# Fresh runs only: protect existing results and handle resumption separately.
-if [[ -e "$output_dir" ]]; then
-    echo "Output already exists for $system_id: $output_dir" >&2
-    echo "Stopping to protect existing results; check the job before resuming." >&2
-    exit 1
-fi
-
-# Load CUDA and require GPU execution instead of falling back to the CPU.
-module load cuda-12.9
+# Keep Slurm's GPU mask. Device 0 means its first visible, allocated GPU.
+module load cuda-12.9 || simcalc_error "Cannot load cuda-12.9. Check the node's available modules."
 export OPENMM_PLATFORM=CUDA
+export OPENMM_DEVICE_INDEX=0
+.venv/bin/python -u simcalc/validate_solution.py "$system_id" ||
+    simcalc_error "Allocation validation failed; the simulation was not started."
 
-# Run equilibration and production. -u keeps log messages from being buffered.
+# The workflow validates inputs and initializes real CUDA simulations itself.
 .venv/bin/python -u mains/run_solution_sweep.py "$system_id"

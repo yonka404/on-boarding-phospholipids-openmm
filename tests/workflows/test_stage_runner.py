@@ -271,6 +271,62 @@ class StageRunnerCheckpointTests(unittest.TestCase):
 
         self.checkpoint_manager.clear.assert_not_called()
 
+    def test_simulation_initialization_failure_does_not_create_output_directory(self) -> None:
+        self.simulation_factory.create.side_effect = RuntimeError("CUDA initialization failed")
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "charmm_gui_md.shared.workflows.stage_runner.OpenMMNativeFiles.from_root",
+                return_value=self.files,
+            ),
+            mock.patch(
+                "charmm_gui_md.shared.workflows.stage_runner.OpenMMStageProtocol.from_file",
+                return_value=self.protocol,
+            ),
+        ):
+            outputs_dir = Path(tmpdir) / "new_replica"
+            with self.assertRaisesRegex(RuntimeError, "CUDA initialization failed"):
+                self._runner().run(
+                    inputs_dir=Path("inputs"),
+                    outputs_dir=outputs_dir,
+                    step_name="step5_production",
+                )
+            self.assertFalse(outputs_dir.exists())
+
+        self.checkpoint_manager.restore.assert_not_called()
+        self.reporter_installer.install.assert_not_called()
+
+    def test_simulation_initialization_failure_preserves_existing_output(self) -> None:
+        self.simulation_factory.create.side_effect = RuntimeError("CUDA initialization failed")
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "charmm_gui_md.shared.workflows.stage_runner.OpenMMNativeFiles.from_root",
+                return_value=self.files,
+            ),
+            mock.patch(
+                "charmm_gui_md.shared.workflows.stage_runner.OpenMMStageProtocol.from_file",
+                return_value=self.protocol,
+            ),
+        ):
+            outputs_dir = Path(tmpdir)
+            stage_dir = outputs_dir / "step5_production"
+            stage_dir.mkdir()
+            checkpoint = stage_dir / "checkpoint.chk"
+            checkpoint.write_bytes(b"existing checkpoint")
+            with self.assertRaisesRegex(RuntimeError, "CUDA initialization failed"):
+                self._runner().run(
+                    inputs_dir=Path("inputs"),
+                    outputs_dir=outputs_dir,
+                    step_name="step5_production",
+                )
+            self.assertEqual(checkpoint.read_bytes(), b"existing checkpoint")
+
+        self.checkpoint_manager.restore.assert_not_called()
+        self.checkpoint_manager.clear.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

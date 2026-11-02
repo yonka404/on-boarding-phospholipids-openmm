@@ -1,13 +1,17 @@
 """Exercise the launchers with filesystem fixtures and fake Slurm commands."""
 
+import ast
 import json
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PROJECT = Path(__file__).resolve().parents[2]
 
@@ -19,7 +23,7 @@ class SimcalcLauncherTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "project with spaces"
         self.root.mkdir()
         (self.root / "simcalc").mkdir()
-        for name in ("main.sh", "run_solution.slurm", "common.sh"):
+        for name in ("main.py", "run_solution.slurm", "common.py", "run_solution.py"):
             source = PROJECT / "simcalc" / name
             if source.exists():
                 shutil.copyfile(source, self.root / "simcalc" / name)
@@ -50,7 +54,7 @@ class SimcalcLauncherTests(unittest.TestCase):
         self.calls = Path(self.temp.name) / "calls.jsonl"
         tool = self.bin / "tool"
         tool.write_text("""#!/usr/bin/python3
-import json, os, pathlib, sys, time
+import json, os, pathlib, signal, sys, time
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ["FAKE_CALLS"], "a") as f:
@@ -73,6 +77,8 @@ elif name == "sinfo":
     print(f"nvdfen1|{state}|{gpu}|{cpus}|{mem}")
     print(f"nvdfen2|{state}|{gpu}|{cpus}|{mem}")
 elif name == "squeue":
+    if mode == "queue_fail": sys.exit(1)
+    if mode == "bad_queue": print("not a valid queue row")
     if mode == "duplicate": print("203|solution-md-test_replica_2|RUNNING")
     elif mode == "other_job": print("203|solution-md-other_system|RUNNING")
 elif name == "sbatch":
@@ -87,19 +93,28 @@ elif name == "sbatch":
     elif mode == "submit_fail":
         print("Submission refused", file=sys.stderr)
         sys.exit(1)
+    elif mode == "bad_reply": print("unrecognized reply")
+    elif mode == "federated": print("321;simcalc")
     else: print("321")
-elif name == "mkdir":
-    if os.environ.get("FAKE_APPEAR_ON_LOCK") and args[-1].endswith(".test_replica_2.lock"):
-        pathlib.Path(os.environ["FAKE_OUTPUT"]).mkdir()
-    os.execv("/usr/bin/mkdir", ["mkdir", *args])
+elif name == "module":
+    if mode == "module_fail": sys.exit(1)
 elif name == "getconf": print("glibc " + os.environ.get("FAKE_GLIBC", "2.39"))
 elif name == "python":
     if "validate_solution.py" in " ".join(args) and mode == "allocation_fail":
         print("GPU allocation invalid", file=sys.stderr)
         sys.exit(1)
-    print("GPU invocation " + os.environ.get("OPENMM_PLATFORM", "") + " " + os.environ.get("OPENMM_DEVICE_INDEX", ""))
-elif name == "srun":
-    os.execv(args[0], args)
+    if "run_solution_sweep.py" in " ".join(args):
+        if mode == "sweep_fail": sys.exit(17)
+        if mode == "long_sweep":
+            def interrupted(signum, frame):
+                lock = pathlib.Path(os.environ["FAKE_LOCK"])
+                pathlib.Path(os.environ["FAKE_STOPPED"]).write_text(str(lock.exists()))
+                sys.exit(128 + signum)
+            signal.signal(signal.SIGTERM, interrupted)
+            signal.signal(signal.SIGINT, interrupted)
+            pathlib.Path(os.environ["FAKE_MARKER"]).touch()
+            time.sleep(15)
+    print("GPU invocation " + os.environ.get("OPENMM_PLATFORM", "") + " " + os.environ.get("OPENMM_DEVICE_INDEX", "") + " mask=" + os.environ.get("CUDA_VISIBLE_DEVICES", ""))
 """)
         tool.chmod(0o755)
         for name in (
@@ -109,8 +124,6 @@ elif name == "srun":
             "sbatch",
             "module",
             "getconf",
-            "srun",
-            "mkdir",
         ):
             (self.bin / name).symlink_to(tool)
         python = self.root / ".venv/bin/python"
@@ -125,10 +138,10 @@ elif name == "srun":
             CUDA_VISIBLE_DEVICES="2",
         )
 
-    def run_script(self, script="main.sh", args=None, mode=""):
+    def run_script(self, script="main.py", args=None, mode=""):
         return subprocess.run(
             [
-                "bash",
+                *(["bash"] if script.endswith(".slurm") else [sys.executable, "-S"]),
                 str(self.root / "simcalc" / script),
                 *(args if args is not None else [self.system_id]),
             ],
@@ -157,12 +170,17 @@ elif name == "srun":
         self.assertEqual(submissions[0][-1], self.system_id)
         self.assertFalse(any("nodelist" in arg for arg in submissions[0]))
         self.assertFalse((self.outputs / self.system_id).exists())
+        self.assertEqual(self.invocations("python"), [])
+        self.assertTrue(self.invocations("scontrol"))
+        self.assertTrue(self.invocations("squeue"))
+        self.assertTrue(self.invocations("sinfo"))
+        self.assertTrue(any("--test-only" in a for a in self.invocations("sbatch")))
 
-    def test_check_only_never_submits(self):
+    def test_removed_check_only_flag_is_rejected_without_contacting_slurm(self):
         result = self.run_script(args=["--check-only", self.system_id])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.invocations("sbatch"))
-        self.assertFalse(any("--parsable" in a for a in self.invocations("sbatch")))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrecognized arguments", result.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_missing_estimate_still_submits(self):
         result = self.run_script(mode="no_estimate")
@@ -170,7 +188,7 @@ elif name == "srun":
         self.assertEqual(sum("--parsable" in a for a in self.invocations("sbatch")), 1)
 
     def test_bad_arguments_do_not_contact_slurm(self):
-        for args in ([], ["../bad"], ["."], [".."], ["a", "b"]):
+        for args in ([], ["../bad"], ["."], [".."], ["a", "b"], ["a b"], ["a;touch x"]):
             with self.subTest(args=args):
                 self.assertNotEqual(self.run_script(args=args).returncode, 0)
         self.assertEqual(self.invocations("sbatch"), [])
@@ -179,6 +197,7 @@ elif name == "srun":
         for path in (
             self.inputs / "step5_production.inp",
             self.root / ".venv/bin/python",
+            self.root / "simcalc/run_solution.py",
         ):
             with self.subTest(path=path):
                 saved = path.read_bytes() if not path.is_symlink() else None
@@ -223,6 +242,7 @@ elif name == "srun":
             "little_ram",
             "short_walltime",
             "nodes_down",
+            "queue_fail",
         ):
             with self.subTest(mode=mode):
                 result = self.run_script(mode=mode)
@@ -259,6 +279,7 @@ elif name == "srun":
             ],
         )
         self.assertIn("GPU invocation CUDA 0", result.stdout)
+        self.assertIn("mask=2", result.stdout)
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
 
     def test_allocation_validation_failure_prevents_simulation_and_cleans_lock(self):
@@ -268,7 +289,7 @@ elif name == "srun":
         self.assertFalse((self.outputs / self.system_id).exists())
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
 
-    def test_old_glibc_fails_before_python(self):
+    def test_old_glibc_fails_before_project_python(self):
         self.env["FAKE_GLIBC"] = "2.31"
         self.assertNotEqual(self.run_script(script="run_solution.slurm").returncode, 0)
         self.assertEqual(self.invocations("python"), [])
@@ -279,10 +300,24 @@ elif name == "srun":
         self.assertEqual(self.invocations("python"), [])
 
     def test_output_appearing_during_lock_acquisition_is_protected(self):
-        self.env["FAKE_APPEAR_ON_LOCK"] = "1"
-        self.env["FAKE_OUTPUT"] = str(self.outputs / self.system_id)
-        result = self.run_script(script="run_solution.slurm")
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        from simcalc import common, run_solution
+
+        original_mkdir = Path.mkdir
+        output = self.outputs / self.system_id
+
+        def mkdir(path, *args, **kwargs):
+            if path.name == f".{self.system_id}.lock":
+                original_mkdir(output)
+            return original_mkdir(path, *args, **kwargs)
+
+        original_directory = Path.cwd()
+        self.addCleanup(os.chdir, original_directory)
+        with (
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(Path, "mkdir", mkdir),
+            self.assertRaisesRegex(common.LauncherError, "Output already exists"),
+        ):
+            run_solution.run_job(self.system_id)
         self.assertEqual(self.invocations("python"), [])
         self.assertTrue((self.outputs / self.system_id).exists())
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
@@ -291,7 +326,7 @@ elif name == "srun":
         marker = Path(self.temp.name) / "predicting"
         env = dict(self.env, FAKE_MODE="slow_prediction", FAKE_MARKER=str(marker))
         with subprocess.Popen(
-            ["bash", str(self.root / "simcalc/main.sh"), self.system_id],
+            [sys.executable, "-S", str(self.root / "simcalc/main.py"), self.system_id],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -311,3 +346,169 @@ elif name == "srun":
             stdout, stderr = first.communicate(timeout=3)
             self.assertEqual(first.returncode, 0, stdout + stderr)
         self.assertEqual(sum("--parsable" in a for a in self.invocations("sbatch")), 1)
+
+    def test_missing_slurm_command_prevents_submission(self):
+        (self.bin / "sinfo").unlink()
+        self.env["PATH"] = str(self.bin)
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sinfo", result.stderr)
+        self.assertEqual(self.invocations("sbatch"), [])
+
+    def test_malformed_queue_fails_clearly_without_submitting(self):
+        result = self.run_script(mode="bad_queue")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("queue", result.stderr.lower())
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.invocations("sbatch"), [])
+
+    def test_checks_use_resource_requests_from_batch_file(self):
+        batch = self.root / "simcalc/run_solution.slurm"
+        original = batch.read_text()
+        for old, new in (
+            ("--mem=16G", "--mem=80G"),
+            ("--cpus-per-task=4", "--cpus-per-task=64"),
+            ("--time=7-00:00:00", "--time=9-00:00:00"),
+        ):
+            with self.subTest(request=new):
+                batch.write_text(original.replace(old, new))
+                result = self.run_script()
+                self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.invocations("sbatch"), [])
+
+    def test_node_rechecks_inputs_and_existing_output_before_project_python(self):
+        (self.inputs / "step3_input.psf").write_text("")
+        result = self.run_script(script="run_solution.slurm")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("step3_input.psf", result.stderr)
+        (self.inputs / "step3_input.psf").write_text("restored fixture")
+        (self.outputs / self.system_id).mkdir()
+        result = self.run_script(script="run_solution.slurm")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Output already exists", result.stderr)
+        self.assertEqual(self.invocations("python"), [])
+
+    def test_bootstrap_syntax_supports_python_38(self):
+        for name in ("__init__.py", "main.py", "common.py", "run_solution.py"):
+            with self.subTest(name=name):
+                ast.parse(
+                    (PROJECT / "simcalc" / name).read_text(), feature_version=(3, 8)
+                )
+
+    def test_help_works_with_system_python_without_site_packages(self):
+        for name in ("main.py", "run_solution.py"):
+            result = subprocess.run(
+                ["/usr/bin/python3", "-S", str(self.root / "simcalc" / name), "--help"],
+                cwd=self.temp.name,
+                env=self.env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("system_id", result.stdout)
+        self.assertFalse(self.calls.exists())
+
+    def test_malformed_reply_warns_without_resubmitting(self):
+        result = self.run_script(mode="bad_reply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("squeue", result.stderr)
+        self.assertEqual(sum("--parsable" in a for a in self.invocations("sbatch")), 1)
+
+    def test_federated_reply_extracts_job_id(self):
+        result = self.run_script(mode="federated")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("squeue -j 321", result.stdout)
+        self.assertIn("test_replica_2-321.log", result.stdout)
+
+    def test_module_failure_prevents_project_python(self):
+        result = self.run_script(script="run_solution.slurm", mode="module_fail")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.invocations("python"), [])
+
+    def test_sweep_failure_keeps_exit_status_and_releases_lock(self):
+        result = self.run_script(script="run_solution.slurm", mode="sweep_fail")
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
+
+    def test_interruption_stops_sweep_before_releasing_execution_lock(self):
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signum=signum):
+                marker = Path(self.temp.name) / f"running-{signum}"
+                stopped = Path(self.temp.name) / f"stopped-{signum}"
+                lock = self.outputs / f".{self.system_id}.lock"
+                env = dict(
+                    self.env,
+                    FAKE_MODE="long_sweep",
+                    FAKE_MARKER=str(marker),
+                    FAKE_STOPPED=str(stopped),
+                    FAKE_LOCK=str(lock),
+                )
+                with subprocess.Popen(
+                    [
+                        "bash",
+                        str(self.root / "simcalc/run_solution.slurm"),
+                        self.system_id,
+                    ],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                ) as job:
+                    try:
+                        deadline = time.monotonic() + 5
+                        while (
+                            not marker.exists()
+                            and time.monotonic() < deadline
+                            and job.poll() is None
+                        ):
+                            time.sleep(0.01)
+                        self.assertTrue(marker.exists(), "sweep did not start")
+                        self.assertTrue(lock.exists())
+                        job.send_signal(signum)
+                        stdout, stderr = job.communicate(timeout=5)
+                        self.assertEqual(job.returncode, 128 + signum, stdout + stderr)
+                        self.assertEqual(stopped.read_text(), "True")
+                        self.assertFalse(lock.exists())
+                    finally:
+                        if job.poll() is None:
+                            job.kill()
+                            job.communicate(timeout=20)
+
+    def test_interruption_during_spawn_stops_child_before_releasing_lock(self):
+        from simcalc import common
+
+        original_popen = subprocess.Popen
+        children = []
+
+        def spawn_then_interrupt(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            children.append(child)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return child
+
+        lock = self.outputs / f".{self.system_id}.lock"
+        try:
+            with (
+                self.assertRaises(common.Interrupted),
+                common.interruption_handlers(),
+                common.directory_lock(lock, "Execution"),
+                mock.patch("simcalc.common.subprocess.Popen", spawn_then_interrupt),
+            ):
+                try:
+                    common.run_command(
+                        [sys.executable, "-c", "import time; time.sleep(15)"],
+                        "Child failed",
+                    )
+                except common.Interrupted:
+                    self.assertTrue(lock.exists())
+                    self.assertIsNotNone(
+                        children[0].poll(), "child must stop before lock cleanup"
+                    )
+                    raise
+            self.assertFalse(lock.exists())
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)

@@ -82,17 +82,16 @@ uv run python mains/run_solution_sweep.py abeta_40
 
 Upload the project scripts and the selected system's input bundle to SIMCALC,
 and install the project's NVIDIA environment in its shared `.venv` first. From
-the project directory on the SIMCALC login node, check a new replica with:
+the project directory on the SIMCALC login node, submit a fresh replica with:
 
 ```bash
-bash simcalc/main.sh --check-only abeta42_7q4m_8bfa_replica_2
+python3 simcalc/main.py SYSTEM_ID
 ```
 
-Then submit it by leaving out `--check-only`:
-
-```bash
-bash simcalc/main.sh abeta42_7q4m_8bfa_replica_2
-```
+Replace `SYSTEM_ID` with the exact input system/replica folder name.
+**Every run automatically performs the prerequisite checks, then submits one
+job if they pass.** There is no separate checking mode or flag to remember.
+Any failed prerequisite stops the launcher with an error before submission.
 
 The system name selects matching input and output directories under
 `data/inputs/openmm_native/solution/` and `data/outputs/openmm_native/solution/`.
@@ -102,10 +101,11 @@ results or stale locks, resumes a checkpoint, or installs packages automatically
 If a job is interrupted, inspect its log and checkpoint before recovering it.
 
 Before submission, the launcher checks files, writable destinations, Slurm
-connectivity, and resource capacity. `--check-only` runs these checks and asks
-Slurm for an estimate without submitting a job; it can create parent/log
-directories and temporary write probes. Reported filesystem space does not
-establish your account's quota or guarantee enough space for the whole run.
+connectivity, duplicate jobs, partition limits, and resource capacity. It can
+create parent/log directories and temporary write probes during these checks.
+Reported filesystem space does not establish your account's quota or guarantee
+enough space for the whole run. Slurm's start-time prediction is advisory: a
+missing estimate produces a warning, then actual submission determines acceptance.
 
 Slurm chooses a GPU node with one GPU, four CPU cores, 16 GB of system RAM, and
 up to seven days of elapsed time. Busy nodes remain eligible: the job queues
@@ -114,33 +114,89 @@ marked down, drained, failed, unknown, or under maintenance are excluded from
 the early capacity check. The job continues after you disconnect. Slurm stores
 the submitted batch script, but jobs read helpers and Python code from the
 shared project directory: avoid editing those files while jobs are queued or
-running. Previously submitted standalone scripts, such as job 203, do not use
-the new helpers.
+running.
 
-Once allocated, the job checks glibc 2.34 or newer, the shared Python environment,
-and visibility of the allocated GPU. The existing simulation workflow validates
-the input bundle and initializes CUDA for each real stage before creating its
-output directory; there is no separate test simulation. CUDA is mandatory; CPU
-cores still handle preparation and coordination. Logs are saved as
-`simcalc/logs/SYSTEM_ID-JOB_ID.log`. The launcher
-prints the job ID and commands for checking its status and reading its log.
+The submission launcher and node runner use only Python's standard library and
+support system Python 3.8 or newer. They do not import OpenMM. The node runner
+checks glibc 2.34 or newer before starting the shared `.venv/bin/python`, which
+must meet the simulation project's Python requirement (3.12.10 or newer).
+Do not use the project environment or `uv run` to launch submission on the older
+login node.
+
+GPU-node checks happen automatically **after Slurm allocates a node**: files and
+output protection are rechecked, then the environment and allocated GPU are
+validated. The existing simulation workflow validates the input bundle and
+initializes CUDA for each real stage before creating its output directory;
+there is no separate test simulation. A GPU initialization failure stops the job
+before that stage writes output. CUDA is mandatory; CPU cores still handle
+preparation and coordination.
+
+Logs are saved as `simcalc/logs/SYSTEM_ID-JOB_ID.log`. The launcher prints the job
+ID and commands for checking its status and reading its log. Owned locks are
+released on normal completion or failure; interruption stops the active child
+before releasing its lock. A forced kill or node crash can leave a lock for
+manual inspection. If submission is interrupted or returns an unrecognized
+reply, check `squeue` before retrying: Slurm might already have accepted it.
+
+The code is split into `simcalc/main.py` (submission), `simcalc/common.py`
+(shared checks and process handling), and `simcalc/run_solution.py` (allocated
+job). `simcalc/validate_solution.py` reports the project environment and GPU
+allocation. The small `simcalc/run_solution.slurm` wrapper holds resource
+requests, loads the CUDA module, and starts the Python node runner.
 
 ### Submit from PyCharm
 
-Upload the updated `simcalc` folder through your existing Deployment connection.
-Under **Settings → Tools → Remote SSH External Tools**, add or update the tool:
+These instructions follow PyCharm Pro 2026.2. Deployment uploads the code; a
+Remote SSH External Tool runs the submission launcher on the SIMCALC login node.
+
+1. Keep the existing **SIMCALC** SFTP Deployment configuration under
+   **Settings → Build, Execution, Deployment → Deployment**. Its connection uses
+   `carlos@simcalc.upc.es`, with root path `/nfs/carlos`. Under **Mappings**, the
+   local project folder maps to deployment path `/on-boarding-phospholipids-openmm`.
+   Together these select `/nfs/carlos/on-boarding-phospholipids-openmm` remotely.
+2. Before uploading, keep `data`, `.venv`, `.git`, `.idea`, and `simcalc/logs`
+   excluded from routine code uploads. Git ignore rules alone do not configure
+   Deployment exclusions.
+   Transfer the selected system's input bundle separately; missing inputs will
+   stop submission automatically.
+3. In the Project panel, right-click the project folder and choose
+   **Deployment → Upload to SIMCALC** (or **Upload to… → SIMCALC**). Wait for the
+   upload to finish in **File Transfer**. If you already use automatic Deployment
+   uploads, still wait for transfers to finish before submitting.
+4. Open **Settings → Tools → Remote SSH External Tools** and add or update a tool
+   with these fields. All paths below are **remote** paths:
 
 | Field | Value |
 | --- | --- |
-| Program | `/bin/bash` |
-| Arguments | `/nfs/carlos/on-boarding-phospholipids-openmm/simcalc/main.sh abeta42_7q4m_8bfa_replica_2` |
+| Name | `Submit SIMCALC solution` |
+| Group | `Remote Tools` |
+| Program | `/usr/bin/python3` |
+| Arguments | `-u /nfs/carlos/on-boarding-phospholipids-openmm/simcalc/main.py SYSTEM_ID` |
 | Working directory | `/nfs/carlos/on-boarding-phospholipids-openmm` |
-| SSH configuration | Your existing SIMCALC connection |
+| SSH Configuration | The existing connection for `carlos@simcalc.upc.es` |
 
-Enable **Open console for tool output**. Run it from **Tools → Remote Tools**;
-SSH connection or authentication failures appear in PyCharm. To check without
-submitting, put `--check-only` before the system name in Arguments. For another
-replica, upload its input bundle and change the system name.
+Replace `SYSTEM_ID` in Arguments with a fresh replica's folder name. Under
+**Advanced Options**, enable **Open console for tool output**. The option
+**Synchronize files after execution** is not a code upload before submission;
+leave it disabled for this tool and use Deployment for uploads.
+
+Run **Tools → Remote Tools → Submit SIMCALC solution**. The console shows all
+submission checks and, on success, the job ID. An SSH authentication failure
+appears in PyCharm before the launcher runs. The tool finishing means submission
+finished; use the printed monitoring commands to follow the queued/running job.
+For another replica, upload its inputs and change the system ID in Arguments.
+
+If **Remote SSH External Tools** is missing, check that the **FTP/SFTP/WebDAV
+Connectivity** and **HTTP Client** plugins are enabled. See JetBrains'
+[remote tool setup](https://www.jetbrains.com/help/pycharm/configuring-third-party-tools.html),
+[tool settings](https://www.jetbrains.com/help/pycharm/settings-tools-remote-ssh-external-tools.html),
+and [Deployment upload instructions](https://www.jetbrains.com/help/pycharm/uploading-and-downloading-files.html).
+
+When upgrading from the Bash launcher, update any saved tool commands to the
+Python command above. Deployment can leave deleted local files on the server:
+obsolete `simcalc/main.sh` and `simcalc/common.sh` may still be present there.
+Remove them manually only after no queued/running jobs depend on them. Do not
+enable broad remote deletion to perform this cleanup.
 
 ## Runtime Notes
 

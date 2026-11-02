@@ -1,5 +1,5 @@
 #!/bin/bash -l
-# Submit with: python3 simcalc/main.py SYSTEM_ID
+# Submit with: python3 mains/simcalc.py SYSTEM_ID
 # Slurm chooses a GPU node. These directives must precede executable commands.
 #SBATCH --job-name=solution-md
 #SBATCH --partition=gpu
@@ -13,7 +13,7 @@
 #SBATCH --output=solution-md-%j.log
 
 set -eo pipefail
-cd -- "${SLURM_SUBMIT_DIR:?Submit through simcalc/main.py SYSTEM_ID}"
+cd -- "${SLURM_SUBMIT_DIR:?Submit through mains/simcalc.py SYSTEM_ID}"
 
 # Modules change the shell environment inherited by Python, so this stays in Bash.
 module load cuda-12.9 || {
@@ -22,4 +22,4 @@ module load cuda-12.9 || {
 }
 
 # Python owns all checks and locks. exec lets it receive Slurm's interruption signals.
-exec /usr/bin/python3 -u simcalc/run_solution.py "$@"
+exec /usr/bin/python3 -u mains/_simcalc/run_solution.py "$@"

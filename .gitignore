@@ -1,5 +1,7 @@
 docs/
 data/
+mains/logs/
+# Preserve ignored logs from the previous launcher layout.
 simcalc/logs/
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm

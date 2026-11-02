@@ -11,9 +11,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from simcalc.common import (
+from mains._simcalc.common import (
     Interrupted,
     LauncherError,
     SolutionPaths,
@@ -36,7 +36,7 @@ def run_job(system_id: str) -> int:
         r"[0-9]+", os.environ.get("SLURM_JOB_ID", "")
     ):
         raise LauncherError(
-            "Submit through simcalc/main.py; this script needs a Slurm allocation."
+            "Submit through mains/simcalc.py; this script needs a Slurm allocation."
         )
     paths = SolutionPaths(Path(submit_dir), system_id)
     os.chdir(paths.project_root)
@@ -64,12 +64,12 @@ def run_job(system_id: str) -> int:
         os.environ["OPENMM_PLATFORM"] = "CUDA"
         os.environ["OPENMM_DEVICE_INDEX"] = "0"
         run_command(
-            [str(paths.python), "-u", "simcalc/validate_solution.py", system_id],
+            [str(paths.python), "-u", "mains/_simcalc/validate_solution.py", system_id],
             "Allocation validation failed; the simulation was not started",
         )
         # The existing workflow validates molecular inputs and initializes real CUDA contexts.
         result = run_command(
-            [str(paths.python), "-u", "mains/run_solution_sweep.py", system_id],
+            [str(paths.python), "-u", "mains/local.py", "solution", system_id],
             "Solution sweep failed",
             check=False,
         )

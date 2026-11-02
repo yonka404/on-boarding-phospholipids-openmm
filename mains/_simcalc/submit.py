@@ -8,16 +8,12 @@ import os
 import pwd
 import re
 import shutil
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-# Support running this file by absolute path from PyCharm or any working directory.
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from simcalc.common import (
+from mains._common import PROJECT_ROOT
+from mains._simcalc.common import (
     Interrupted,
     LauncherError,
     SolutionPaths,
@@ -162,8 +158,8 @@ def node_has_capacity(row: str, resources: Resources) -> bool:
 
 
 def submit(system_id: str) -> None:
-    paths = SolutionPaths(Path(__file__).resolve().parents[1], system_id)
-    os.chdir(paths.project_root) # Change directory
+    paths = SolutionPaths(PROJECT_ROOT, system_id)
+    os.chdir(paths.project_root)
 
     # Always check files and destinations before contacting Slurm; no OpenMM import here.
     check_files(paths)
@@ -250,6 +246,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     return 0
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())

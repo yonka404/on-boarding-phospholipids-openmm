@@ -12,7 +12,9 @@ Important paths:
 - `src/charmm_gui_md/shared/`: reusable OpenMM input, protocol, simulation, and workflow logic
 - `src/charmm_gui_md/membrane/`: membrane schedule and public workflow API
 - `src/charmm_gui_md/solution/`: solution schedule and public workflow API
-- `mains/`: runnable scripts
+- `mains/local.py`: direct membrane/solution runs, optionally selecting one stage
+- `mains/simcalc.py`: submit a full solution run from the SIMCALC login node
+- `mains/_simcalc/`: internal Slurm submission and allocated-node helpers
 - `tests/`: test suite written with Python's built-in `unittest`; see
   `tests/README.md` for folder organization
 - `data/`: local input data; do not modify unless explicitly requested
@@ -47,6 +49,49 @@ Use Python 3.12.10 or compatible. Prefer `uv` for environment and test commands.
 Declared project dependencies are OpenMM, Pydantic, Ruff, and mypy. Optional OpenMM platform packages are declared for AMD/HIP and NVIDIA/CUDA. Do not add or recommend dependencies that are not actually intended for this project.
 
 Prefer Python standard library tools when they fit the task. Use Python's built-in `logging` module for logging and `unittest` for tests. Do not introduce third-party logging or test libraries such as `loguru` or `pytest` unless the user explicitly asks for them.
+
+## Running Locally and on SIMCALC
+
+Keep launch logic under `mains/`, separate from the simulation implementation
+under `src/charmm_gui_md/`. The two public entry points are:
+
+```bash
+uv run python mains/local.py solution SYSTEM_ID
+uv run python mains/local.py membrane SYSTEM_ID --stage step6.1_equilibration
+python3 mains/simcalc.py SYSTEM_ID
+```
+
+Local runs default to the full protocol. SIMCALC currently supports fresh full
+solution runs only. Both launchers resolve data paths from the repository root.
+
+The [SIMCALC cluster user's guide](http://salses.upc.es/SIMCON/simcalc.html)
+is the reference for Slurm usage and cluster policies. Consult it when changing
+cluster launch logic. Its documented policies and commands include:
+
+- Compute-node SSH access is closed. Submit batch work through `sbatch`; request
+  an interactive allocation for setup/debugging through `srun`, for example:
+  `srun -p gpu --gres=gpu:1 --cpus-per-task=1 --mem=2G --pty bash -l`.
+- CPU requests count physical cores. The maximum walltime is eight days; each
+  user may have at most six submitted jobs and six GPUs in active use.
+- Load `cuda-12.9` on GPU nodes. Let Slurm assign the node and preserve its
+  `CUDA_VISIBLE_DEVICES` allocation.
+- Monitor with `squeue -u "$USER"` or `squeue -j JOB_ID`; cancel with
+  `scancel JOB_ID`. Inspect GPU capacity with
+  `sinfo -p gpu -O "NodeList:10,StateLong:12,Gres:20,GresUsed:20"` and node details
+  with `scontrol show node NODE_NAME`.
+
+For this project, submit through `mains/simcalc.py` so prerequisite checks run
+before `sbatch`. The batch file requests one GPU, four CPU cores, 16 GB RAM, and
+seven days. Keep submission and node-bootstrap imports standard-library-only
+and compatible with system Python 3.8+. Use system `python3` on the login node,
+not `uv run` or the project environment. After allocation and the glibc check,
+the node runner uses `.venv/bin/python` (Python 3.12.10+) for validation and MD.
+
+Preserve fresh-output protection, duplicate-job checks, lock ownership,
+interruption cleanup, and mandatory CUDA on SIMCALC. Logs and submission locks
+live in `mains/logs/`; execution locks stay alongside system outputs. Do not
+replace shared code while jobs using it are queued or running. See `README.md`
+for deployment, PyCharm submission, and migration instructions.
 
 ## Checks
 

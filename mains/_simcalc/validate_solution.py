@@ -7,6 +7,10 @@ import re
 import socket
 import sys
 from importlib import metadata
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def validate_solution(system_id: str) -> None:
@@ -24,7 +28,7 @@ def validate_solution(system_id: str) -> None:
             "do not override Slurm's GPU visibility."
         )
 
-    from charmm_gui_md.shared.cli import system_id_argument, system_paths
+    from mains._common import system_id_argument, system_paths
 
     system_id = system_id_argument(system_id)
     _, outputs_dir = system_paths("solution", system_id)

@@ -22,14 +22,16 @@ class SimcalcLauncherTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "project with spaces"
         self.root.mkdir()
-        (self.root / "simcalc").mkdir()
-        for name in ("main.py", "run_solution.slurm", "common.py", "run_solution.py"):
-            source = PROJECT / "simcalc" / name
+        (self.root / "mains/_simcalc").mkdir(parents=True)
+        for name in (
+            "__init__.py", "_common.py", "local.py", "simcalc.py",
+            "_simcalc/__init__.py", "_simcalc/submit.py", "_simcalc/common.py",
+            "_simcalc/run_solution.py", "_simcalc/run_solution.slurm",
+        ):
+            source = PROJECT / "mains" / name
             if source.exists():
-                shutil.copyfile(source, self.root / "simcalc" / name)
-        (self.root / "simcalc/validate_solution.py").touch()
-        (self.root / "mains").mkdir()
-        (self.root / "mains/run_solution_sweep.py").touch()
+                shutil.copyfile(source, self.root / "mains" / name)
+        (self.root / "mains/_simcalc/validate_solution.py").touch()
         for name in ("pyproject.toml", "uv.lock"):
             (self.root / name).touch()
         self.system_id = "test_replica_2"
@@ -103,7 +105,7 @@ elif name == "python":
     if "validate_solution.py" in " ".join(args) and mode == "allocation_fail":
         print("GPU allocation invalid", file=sys.stderr)
         sys.exit(1)
-    if "run_solution_sweep.py" in " ".join(args):
+    if "local.py" in " ".join(args):
         if mode == "sweep_fail": sys.exit(17)
         if mode == "long_sweep":
             def interrupted(signum, frame):
@@ -138,11 +140,11 @@ elif name == "python":
             CUDA_VISIBLE_DEVICES="2",
         )
 
-    def run_script(self, script="main.py", args=None, mode=""):
+    def run_script(self, script="simcalc.py", args=None, mode=""):
         return subprocess.run(
             [
                 *(["bash"] if script.endswith(".slurm") else [sys.executable, "-S"]),
-                str(self.root / "simcalc" / script),
+                str(self.root / "mains" / (script if script == "simcalc.py" else "_simcalc/" + script)),
                 *(args if args is not None else [self.system_id]),
             ],
             env=dict(self.env, FAKE_MODE=mode),
@@ -165,6 +167,7 @@ elif name == "python":
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("321", result.stdout)
+        self.assertIn(str(self.root / "mains/logs/test_replica_2-321.log"), result.stdout)
         submissions = [a for a in self.invocations("sbatch") if "--parsable" in a]
         self.assertEqual(len(submissions), 1)
         self.assertEqual(submissions[0][-1], self.system_id)
@@ -197,7 +200,7 @@ elif name == "python":
         for path in (
             self.inputs / "step5_production.inp",
             self.root / ".venv/bin/python",
-            self.root / "simcalc/run_solution.py",
+            self.root / "mains/_simcalc/run_solution.py",
         ):
             with self.subTest(path=path):
                 saved = path.read_bytes() if not path.is_symlink() else None
@@ -220,7 +223,7 @@ elif name == "python":
     def test_execution_and_submission_locks_are_not_removed(self):
         for lock in (
             self.outputs / f".{self.system_id}.lock",
-            self.root / "simcalc/logs" / f".{self.system_id}.submit.lock",
+            self.root / "mains/logs" / f".{self.system_id}.submit.lock",
         ):
             lock.mkdir(parents=True)
             self.assertNotEqual(self.run_script().returncode, 0)
@@ -252,12 +255,12 @@ elif name == "python":
     def test_submit_failure_releases_own_submission_lock(self):
         self.assertNotEqual(self.run_script(mode="submit_fail").returncode, 0)
         self.assertFalse(
-            (self.root / "simcalc/logs" / f".{self.system_id}.submit.lock").exists()
+            (self.root / "mains/logs" / f".{self.system_id}.submit.lock").exists()
         )
         self.assertEqual(self.run_script().returncode, 0)
 
     def test_unwritable_log_directory_prevents_submission(self):
-        logs = self.root / "simcalc/logs"
+        logs = self.root / "mains/logs"
         logs.mkdir()
         logs.chmod(0o555)
         self.addCleanup(logs.chmod, 0o755)
@@ -274,8 +277,8 @@ elif name == "python":
         self.assertEqual(
             calls,
             [
-                ["-u", "simcalc/validate_solution.py", self.system_id],
-                ["-u", "mains/run_solution_sweep.py", self.system_id],
+                ["-u", "mains/_simcalc/validate_solution.py", self.system_id],
+                ["-u", "mains/local.py", "solution", self.system_id],
             ],
         )
         self.assertIn("GPU invocation CUDA 0", result.stdout)
@@ -300,7 +303,7 @@ elif name == "python":
         self.assertEqual(self.invocations("python"), [])
 
     def test_output_appearing_during_lock_acquisition_is_protected(self):
-        from simcalc import common, run_solution
+        from mains._simcalc import common, run_solution
 
         original_mkdir = Path.mkdir
         output = self.outputs / self.system_id
@@ -326,7 +329,7 @@ elif name == "python":
         marker = Path(self.temp.name) / "predicting"
         env = dict(self.env, FAKE_MODE="slow_prediction", FAKE_MARKER=str(marker))
         with subprocess.Popen(
-            [sys.executable, "-S", str(self.root / "simcalc/main.py"), self.system_id],
+            [sys.executable, "-S", str(self.root / "mains/simcalc.py"), self.system_id],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -363,7 +366,7 @@ elif name == "python":
         self.assertEqual(self.invocations("sbatch"), [])
 
     def test_checks_use_resource_requests_from_batch_file(self):
-        batch = self.root / "simcalc/run_solution.slurm"
+        batch = self.root / "mains/_simcalc/run_solution.slurm"
         original = batch.read_text()
         for old, new in (
             ("--mem=16G", "--mem=80G"),
@@ -389,16 +392,19 @@ elif name == "python":
         self.assertEqual(self.invocations("python"), [])
 
     def test_bootstrap_syntax_supports_python_38(self):
-        for name in ("__init__.py", "main.py", "common.py", "run_solution.py"):
+        for name in (
+            "__init__.py", "_common.py", "simcalc.py", "_simcalc/__init__.py",
+            "_simcalc/submit.py", "_simcalc/common.py", "_simcalc/run_solution.py",
+        ):
             with self.subTest(name=name):
                 ast.parse(
-                    (PROJECT / "simcalc" / name).read_text(), feature_version=(3, 8)
+                    (PROJECT / "mains" / name).read_text(), feature_version=(3, 8)
                 )
 
     def test_help_works_with_system_python_without_site_packages(self):
-        for name in ("main.py", "run_solution.py"):
+        for name in ("simcalc.py", "_simcalc/run_solution.py"):
             result = subprocess.run(
-                ["/usr/bin/python3", "-S", str(self.root / "simcalc" / name), "--help"],
+                ["/usr/bin/python3", "-S", str(self.root / "mains" / name), "--help"],
                 cwd=self.temp.name,
                 env=self.env,
                 capture_output=True,
@@ -447,7 +453,7 @@ elif name == "python":
                 with subprocess.Popen(
                     [
                         "bash",
-                        str(self.root / "simcalc/run_solution.slurm"),
+                        str(self.root / "mains/_simcalc/run_solution.slurm"),
                         self.system_id,
                     ],
                     env=env,
@@ -476,7 +482,7 @@ elif name == "python":
                             job.communicate(timeout=20)
 
     def test_interruption_during_spawn_stops_child_before_releasing_lock(self):
-        from simcalc import common
+        from mains._simcalc import common
 
         original_popen = subprocess.Popen
         children = []
@@ -493,7 +499,7 @@ elif name == "python":
                 self.assertRaises(common.Interrupted),
                 common.interruption_handlers(),
                 common.directory_lock(lock, "Execution"),
-                mock.patch("simcalc.common.subprocess.Popen", spawn_then_interrupt),
+                mock.patch("mains._simcalc.common.subprocess.Popen", spawn_then_interrupt),
             ):
                 try:
                     common.run_command(

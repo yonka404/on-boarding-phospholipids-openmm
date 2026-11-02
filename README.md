@@ -64,29 +64,47 @@ files required by active stage protocols; it does not require a `lig/` folder.
 
 ## Running
 
-Scripts select a system by its directory identifier and derive mirrored input
-and output paths under `data/`. Single-step commands also require a valid stage
-name.
+Start in `mains/`. There are two public launchers:
+
+| Launcher | Where it runs | Supported runs |
+| --- | --- | --- |
+| `mains/local.py` | Your PC | Membrane or solution; full protocol or one stage |
+| `mains/simcalc.py` | SIMCALC login node | Submit a fresh, full solution protocol to Slurm |
+
+Run these examples from the repository root:
 
 ```bash
-uv run python mains/run_membrane_single_step.py ligand_membrane step6.1_equilibration
-uv run python mains/run_membrane_sweep.py ligand_membrane
+# Full local protocols
+uv run python mains/local.py solution abeta_40
+uv run python mains/local.py membrane ligand_membrane
+
+# One local stage
+uv run python mains/local.py solution abeta_40 --stage step4_equilibration
+uv run python mains/local.py membrane ligand_membrane --stage step6.1_equilibration
+
+# Submit from the SIMCALC login node using system Python
+python3 mains/simcalc.py SYSTEM_ID
 ```
 
-```bash
-uv run python mains/run_solution_single_step.py abeta_40 step4_equilibration
-uv run python mains/run_solution_sweep.py abeta_40
-```
+Omitting `--stage` runs the full protocol. Stage names are validated against the
+selected system type; an invalid stage lists its allowed names. Both launchers
+accept `--help`.
+
+The system ID selects mirrored input and output directories under `data/`.
+Paths are resolved from the repository location, independently of the working
+directory. In an IDE or another directory, use the absolute script path and,
+for local runs, the project's `.venv` interpreter.
+
+Launch support lives in `mains/_common.py` and `mains/_simcalc/`; the latter's
+scripts are internal Slurm helpers. Simulation implementations and public
+workflow APIs live in `src/charmm_gui_md/`.
 
 ## SIMCALC GPU jobs
 
-Upload the project scripts and the selected system's input bundle to SIMCALC,
-and install the project's NVIDIA environment in its shared `.venv` first. From
-the project directory on the SIMCALC login node, submit a fresh replica with:
-
-```bash
-python3 simcalc/main.py SYSTEM_ID
-```
+Consult the [SIMCALC cluster guide](http://salses.upc.es/SIMCON/simcalc.html)
+for Slurm usage and cluster policies. Upload the project scripts and the
+selected system's input bundle, and install the project's NVIDIA environment
+in its shared `.venv` before using the submission command above.
 
 Replace `SYSTEM_ID` with the exact input system/replica folder name.
 **Every run automatically performs the prerequisite checks, then submits one
@@ -131,18 +149,20 @@ there is no separate test simulation. A GPU initialization failure stops the job
 before that stage writes output. CUDA is mandatory; CPU cores still handle
 preparation and coordination.
 
-Logs are saved as `simcalc/logs/SYSTEM_ID-JOB_ID.log`. The launcher prints the job
+Logs are saved as `mains/logs/SYSTEM_ID-JOB_ID.log`. The launcher prints the job
 ID and commands for checking its status and reading its log. Owned locks are
 released on normal completion or failure; interruption stops the active child
 before releasing its lock. A forced kill or node crash can leave a lock for
 manual inspection. If submission is interrupted or returns an unrecognized
 reply, check `squeue` before retrying: Slurm might already have accepted it.
 
-The code is split into `simcalc/main.py` (submission), `simcalc/common.py`
-(shared checks and process handling), and `simcalc/run_solution.py` (allocated
-job). `simcalc/validate_solution.py` reports the project environment and GPU
-allocation. The small `simcalc/run_solution.slurm` wrapper holds resource
-requests, loads the CUDA module, and starts the Python node runner.
+`mains/simcalc.py` delegates submission to `mains/_simcalc/submit.py`.
+Inside that internal folder, `common.py` owns checks and process handling,
+`run_solution.slurm` holds resource requests and loads CUDA, and
+`run_solution.py` manages the allocated job. It runs `validate_solution.py`
+in the project environment before invoking `mains/local.py solution SYSTEM_ID`
+with that same interpreter. Both environments therefore use the same protocol
+dispatch logic.
 
 ### Submit from PyCharm
 
@@ -154,7 +174,8 @@ Remote SSH External Tool runs the submission launcher on the SIMCALC login node.
    `carlos@simcalc.upc.es`, with root path `/nfs/carlos`. Under **Mappings**, the
    local project folder maps to deployment path `/on-boarding-phospholipids-openmm`.
    Together these select `/nfs/carlos/on-boarding-phospholipids-openmm` remotely.
-2. Before uploading, keep `data`, `.venv`, `.git`, `.idea`, and `simcalc/logs`
+2. Before uploading, keep `data`, `.venv`, `.git`, `.idea`, `mains/logs`, and
+   any legacy `simcalc/logs`
    excluded from routine code uploads. Git ignore rules alone do not configure
    Deployment exclusions.
    Transfer the selected system's input bundle separately; missing inputs will
@@ -171,7 +192,7 @@ Remote SSH External Tool runs the submission launcher on the SIMCALC login node.
 | Name | `Submit SIMCALC solution` |
 | Group | `Remote Tools` |
 | Program | `/usr/bin/python3` |
-| Arguments | `-u /nfs/carlos/on-boarding-phospholipids-openmm/simcalc/main.py SYSTEM_ID` |
+| Arguments | `-u /nfs/carlos/on-boarding-phospholipids-openmm/mains/simcalc.py SYSTEM_ID` |
 | Working directory | `/nfs/carlos/on-boarding-phospholipids-openmm` |
 | SSH Configuration | The existing connection for `carlos@simcalc.upc.es` |
 
@@ -192,11 +213,20 @@ Connectivity** and **HTTP Client** plugins are enabled. See JetBrains'
 [tool settings](https://www.jetbrains.com/help/pycharm/settings-tools-remote-ssh-external-tools.html),
 and [Deployment upload instructions](https://www.jetbrains.com/help/pycharm/uploading-and-downloading-files.html).
 
-When upgrading from the Bash launcher, update any saved tool commands to the
-Python command above. Deployment can leave deleted local files on the server:
-obsolete `simcalc/main.sh` and `simcalc/common.sh` may still be present there.
-Remove them manually only after no queued/running jobs depend on them. Do not
-enable broad remote deletion to perform this cleanup.
+### Migrating older launch commands
+
+The four `mains/run_*` scripts and `simcalc/main.py` have been replaced; there
+are no compatibility wrappers. Update saved commands and PyCharm configurations
+to the two launchers above. Local commands now select `membrane` or `solution`
+explicitly, and a single-stage run uses `--stage STAGE_NAME`.
+
+Wait until all queued/running jobs using the old layout have finished before
+replacing shared project files on SIMCALC. Deployment can leave removed Python
+files or older `simcalc/main.sh` and `simcalc/common.sh` scripts on the server.
+Remove obsolete scripts manually after that point; do not enable broad remote
+deletion. Preserve existing `simcalc/logs/` files and all simulation outputs.
+New submissions write logs and submission locks under `mains/logs/`; execution
+locks remain alongside their system's output directory.
 
 ## Runtime Notes
 

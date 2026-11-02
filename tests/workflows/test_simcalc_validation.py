@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from simcalc import validate_solution
+from mains import _common
+from mains._simcalc import validate_solution
 
 
 class SimcalcValidationTests(unittest.TestCase):
@@ -23,6 +24,7 @@ class SimcalcValidationTests(unittest.TestCase):
     def run_validation(self, system_id: str = "replica_2") -> str:
         with (
             contextlib.chdir(self.root),
+            mock.patch.object(_common, "PROJECT_ROOT", self.root),
             mock.patch.dict(os.environ, self.environment),
             mock.patch("importlib.metadata.version", return_value="8.5.2"),
             contextlib.redirect_stdout(io.StringIO()) as output,

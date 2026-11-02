@@ -14,6 +14,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import FrameType
 
+from mains._common import system_paths
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,19 +33,16 @@ class SolutionPaths:
     def __init__(self, project_root: Path, system_id: str) -> None:
         self.project_root = project_root.resolve()
         self.system_id = system_id
-        self.input_dir = (
-            self.project_root
-            / "data/inputs/openmm_native/solution"
-            / system_id
-            / "openmm"
+        inputs, self.output_dir = system_paths(
+            "solution", system_id, project_root=self.project_root
         )
-        self.output_root = self.project_root / "data/outputs/openmm_native/solution"
-        self.output_dir = self.output_root / system_id
+        self.input_dir = inputs / "openmm"
+        self.output_root = self.output_dir.parent
         self.execution_lock = self.output_root / f".{system_id}.lock"
-        self.log_root = self.project_root / "simcalc/logs"
+        self.log_root = self.project_root / "mains/logs"
         self.submission_lock = self.log_root / f".{system_id}.submit.lock"
         self.job_name = f"solution-md-{system_id}"
-        self.batch_file = self.project_root / "simcalc/run_solution.slurm"
+        self.batch_file = self.project_root / "mains/_simcalc/run_solution.slurm"
         # Do not resolve this symlink: Python must recognize the virtual environment.
         self.python = self.project_root / ".venv/bin/python"
 
@@ -60,11 +59,14 @@ def check_files(paths: SolutionPaths) -> None:
     for name in (
         "pyproject.toml",
         "uv.lock",
-        "mains/run_solution_sweep.py",
-        "simcalc/common.py",
-        "simcalc/run_solution.py",
-        "simcalc/validate_solution.py",
-        "simcalc/run_solution.slurm",
+        "mains/__init__.py",
+        "mains/_common.py",
+        "mains/local.py",
+        "mains/_simcalc/__init__.py",
+        "mains/_simcalc/common.py",
+        "mains/_simcalc/run_solution.py",
+        "mains/_simcalc/validate_solution.py",
+        "mains/_simcalc/run_solution.slurm",
     ):
         path = paths.project_root / name
         if not path.is_file() or not os.access(path, os.R_OK):

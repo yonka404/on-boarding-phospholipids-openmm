@@ -69,7 +69,7 @@ Start in `mains/`. There are two public launchers:
 | Launcher | Where it runs | Supported runs |
 | --- | --- | --- |
 | `mains/local.py` | Your PC | Membrane or solution; full protocol or one stage |
-| `mains/simcalc.py` | SIMCALC login node | Submit a fresh, full solution protocol to Slurm |
+| `mains/simcalc.py` | SIMCALC login node | Start or recover a full solution protocol through Slurm |
 
 Run these examples from the repository root:
 
@@ -107,22 +107,42 @@ selected system's input bundle, and install the project's NVIDIA environment
 in its shared `.venv` before using the submission command above.
 
 Replace `SYSTEM_ID` with the exact input system/replica folder name.
-**Every run automatically performs the prerequisite checks, then submits one
-job if they pass.** There is no separate checking mode or flag to remember.
+**The same command starts a fresh run or recovers an interrupted run automatically.**
+It performs the prerequisite checks and submits one job when work remains.
+There is no separate recovery flag to remember:
+
+```bash
+python3 mains/simcalc.py "abeta42_7q4m_8bfa_replica_2"
+```
+
 Any failed prerequisite stops the launcher with an error before submission.
 
 The system name selects matching input and output directories under
 `data/inputs/openmm_native/solution/` and `data/outputs/openmm_native/solution/`.
-The launcher refuses existing output, execution locks, and an already queued
-or running job for that system. It starts fresh runs only; it never deletes
-results or stale locks, resumes a checkpoint, or installs packages automatically.
-If a job is interrupted, inspect its log and checkpoint before recovering it.
+Existing results select the action:
+
+| Results | Action |
+| --- | --- |
+| Output directory absent | Submit a fresh run |
+| Interrupted stage has a checkpoint and both reporter files | Submit recovery; validate the checkpoint on the allocated GPU |
+| Earlier stages complete; next stage absent | Continue from the previous stage's final state |
+| All stages complete | Report completion without submitting |
+| Missing recovery files, inconsistent stage order, or empty/unrecognized output | Stop for inspection and preserve results |
+
+A checkpoint takes precedence over final files, including an interruption during
+finalization. The launcher refuses execution locks and duplicate queued/running
+jobs for that system. It never removes stale locks or installs packages. Output
+checks repeat before submission and under the execution lock on the GPU node.
+The selected fresh/recovery mode travels with the job: a queued fresh job refuses
+newly appearing results, and a recovery job refuses missing results (including
+its selected checkpoint stage) instead of starting over. A recovery job whose
+stages have since finished exits successfully.
 
 Before submission, the launcher checks files, writable destinations, Slurm
 connectivity, duplicate jobs, partition limits, and resource capacity. It can
 create parent/log directories and temporary write probes during these checks.
 Reported filesystem space does not establish your account's quota or guarantee
-enough space for the whole run. Slurm's start-time prediction is advisory: a
+enough space for the whole run or recovery backups. Slurm's start-time prediction is advisory: a
 missing estimate produces a warning, then actual submission determines acceptance.
 
 Slurm chooses a GPU node with one GPU, four CPU cores, 16 GB of system RAM, and
@@ -196,7 +216,7 @@ Remote SSH External Tool runs the submission launcher on the SIMCALC login node.
 | Working directory | `/nfs/carlos/on-boarding-phospholipids-openmm` |
 | SSH Configuration | The existing connection for `carlos@simcalc.upc.es` |
 
-Replace `SYSTEM_ID` in Arguments with a fresh replica's folder name. Under
+Replace `SYSTEM_ID` in Arguments with the replica's folder name. Under
 **Advanced Options**, enable **Open console for tool output**. The option
 **Synchronize files after execution** is not a code upload before submission;
 leave it disabled for this tool and use Deployment for uploads.
@@ -231,18 +251,40 @@ locks remain alongside their system's output directory.
 ## Runtime Notes
 
 - Every stage writes `checkpoint.chk` in its output directory at the same
-  interval as trajectory frames. OpenMM replaces this file atomically, so a
-  crash can lose at most one trajectory-reporting interval of computation.
-- Rerun the same single-step command after a crash to load the checkpoint,
-  append to `state_data.csv` and `trajectory.dcd`, and run only the remaining
-  steps. Rerunning a sweep also skips completed stages before resuming the
-  interrupted stage.
+  interval as trajectory frames. Computation since the last saved checkpoint
+  is repeated on recovery.
+- Rerun the same full-protocol command after a crash, locally or on SIMCALC,
+  to skip completed stages, restore the interrupted stage, and run its remaining
+  steps without repeating minimization or generating new velocities. A missing
+  next stage starts from the previous stage's final dynamic state. Local
+  `--stage` also restores a checkpoint; explicitly selecting a completed stage
+  without one retains the existing behavior of rerunning that stage.
+- After checkpoint loading succeeds, recovery validates both reporter files
+  through the checkpoint step. It retains CSV records and DCD frames through
+  that step, removes any later tail, corrects DCD frame-count and timing metadata, and then
+  appends to the same `state_data.csv` and `trajectory.dcd`. Missing or corrupt
+  data within the required prefix stops recovery before either file is changed.
+  An incomplete trailing record is discarded only after the prefix is validated.
+- Before replacing an affected reporter file, recovery finishes backups of all
+  affected originals in a unique `recovery-*` directory inside that stage. Logs
+  report the backup location, resumed step, and remaining steps. Repair uses
+  streaming I/O and atomic file replacements; it keeps the checkpoint unchanged
+  so retrying after interruption between replacements is safe. Allow disk space
+  for the original-file backups and prepared replacements. Backups, including
+  any partially prepared recovery directories, remain available for inspection.
+- Incomplete stage directories without checkpoints are never overwritten by
+  the shared workflow. Inspect such results manually. A full protocol also
+  rejects results that violate stage order before starting any stage.
 - A checkpoint is removed only after `final_state.xml` and
   `final_coordinates.pdb` are written successfully. If checkpoint loading
   fails, the run stops without overwriting partial outputs.
-- Binary checkpoints require the same system definition, OpenMM version,
-  platform, and hardware. They are intended for continuing on the same PC;
-  completed stages continue to use the more portable `final_state.xml`.
+- Keep inputs, protocol settings, and the OpenMM environment unchanged during
+  recovery. [OpenMM binary checkpoints](https://docs.openmm.org/latest/api-python/generated/openmm.app.checkpointreporter.CheckpointReporter.html)
+  require compatible hardware and software as well as the same system. A
+  checkpoint that fails to load on the allocated GPU stops recovery without
+  replacing results. Completed stages use the portable `final_state.xml` to
+  initialize the next stage. Portable-state fallback for interrupted stages,
+  automatic Slurm resubmission, and extending completed runs are not supported.
 - On Linux AMD hosts with ROCm installed, the package preloads the HIP runtime
   before OpenMM import so `HIP` can be used when available.
 - On NVIDIA hosts, normal OpenMM `CUDA` selection remains unchanged.

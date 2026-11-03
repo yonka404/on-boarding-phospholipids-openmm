@@ -4,6 +4,7 @@ from openmm.app import CheckpointReporter, DCDReporter, Simulation, StateDataRep
 
 from charmm_gui_md.shared.artifacts import StageArtifacts
 from charmm_gui_md.shared.protocols import OpenMMStageProtocol
+from charmm_gui_md.shared.simulation.recovery import reconcile_reporters
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,13 @@ class StageReporterInstaller:
                     f"[{protocol.step_name}] Cannot resume without existing reporter "
                     f"outputs: {missing_list}"
                 )
+            reconcile_reporters(
+                artifacts,
+                protocol,
+                checkpoint_step=simulation.currentStep,
+                atom_count=simulation.topology.getNumAtoms(),
+                periodic=simulation.topology.getUnitCellDimensions() is not None,
+            )
 
         simulation.reporters.append(
             StateDataReporter(

@@ -6,6 +6,7 @@ from unittest import mock
 
 from charmm_gui_md.shared.artifacts import StageArtifacts
 from charmm_gui_md.shared.simulation.reporters import StageReporterInstaller
+from tests.simulation.test_recovery import topology, write_reports
 
 
 class StageReporterInstallerTests(unittest.TestCase):
@@ -13,13 +14,15 @@ class StageReporterInstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             artifacts = StageArtifacts.for_stage(Path(tmpdir), "step7_production")
             artifacts.create_directory()
-            artifacts.state_data_path.write_text("existing data")
-            artifacts.trajectory_path.write_bytes(b"existing trajectory")
-            simulation = SimpleNamespace(reporters=[])
+            top = topology()
+            write_reports(artifacts, top)
+            simulation = SimpleNamespace(reporters=[], currentStep=8, topology=top)
             protocol = SimpleNamespace(
                 step_name="step7_production",
-                state_report_interval_steps=10,
-                trajectory_report_interval_steps=25,
+                state_report_interval_steps=2,
+                trajectory_report_interval_steps=4,
+                dynamics_steps=20,
+                timestep_ps=0.002,
             )
 
             with (
@@ -46,13 +49,13 @@ class StageReporterInstallerTests(unittest.TestCase):
         self.assertTrue(state_reporter.call_args.kwargs["append"])
         dcd_reporter.assert_called_once_with(
             str(artifacts.trajectory_path),
-            25,
+            4,
             append=True,
             enforcePeriodicBox=True,
         )
         checkpoint_reporter.assert_called_once_with(
             str(artifacts.checkpoint_path),
-            25,
+            4,
         )
         self.assertEqual(
             simulation.reporters,

@@ -25,6 +25,24 @@ class StageArtifacts:
     def create_directory(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    def validate_for_run(self) -> None:
+        """Protect partial results while allowing an explicit completed-stage rerun."""
+        if not self.output_dir.exists() and not self.output_dir.is_symlink():
+            return
+        if self.output_dir.is_symlink() or not self.output_dir.is_dir():
+            raise RuntimeError(f"Inspect stage output: {self.output_dir} is not a regular directory")
+        for path in (
+            self.checkpoint_path, self.state_data_path, self.trajectory_path,
+            self.final_state_path, self.final_coordinates_path,
+        ):
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                raise RuntimeError(f"Inspect stage output: {path} is not a regular file")
+        if not self.checkpoint_path.is_file() and not self.is_complete:
+            raise RuntimeError(
+                f"Cannot overwrite incomplete stage {self.output_dir} without a checkpoint. "
+                "Inspect the partial results before retrying."
+            )
+
     @property
     def final_coordinates_path(self) -> Path:
         return self.output_dir / FINAL_COORDINATES_FILENAME

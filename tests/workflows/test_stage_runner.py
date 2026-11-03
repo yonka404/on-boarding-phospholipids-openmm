@@ -43,6 +43,38 @@ class StageRunnerCheckpointTests(unittest.TestCase):
             checkpoint_manager=self.checkpoint_manager,
         )
 
+    def test_incomplete_stage_without_checkpoint_is_never_overwritten(self) -> None:
+        self.checkpoint_manager.restore.return_value = None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs = Path(tmpdir)
+            artifacts = StageArtifacts.for_stage(outputs, "step5_production")
+            artifacts.create_directory()
+            artifacts.state_data_path.write_text("partial results")
+            with (
+                mock.patch("charmm_gui_md.shared.workflows.stage_runner.OpenMMNativeFiles.from_root", return_value=self.files),
+                mock.patch("charmm_gui_md.shared.workflows.stage_runner.OpenMMStageProtocol.from_file", return_value=self.protocol),
+                self.assertRaisesRegex(RuntimeError, "incomplete.*checkpoint"),
+            ):
+                self._runner().run(Path("inputs"), outputs, "step5_production")
+            self.assertEqual(artifacts.state_data_path.read_text(), "partial results")
+        self.simulation_factory.create.assert_not_called()
+
+    def test_explicit_completed_stage_keeps_existing_rerun_behavior(self) -> None:
+        self.checkpoint_manager.restore.return_value = None
+        self.restart_resolver.resolve.return_value = SimpleNamespace(state_path=None)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs = Path(tmpdir)
+            artifacts = StageArtifacts.for_stage(outputs, "step5_production")
+            artifacts.create_directory()
+            artifacts.final_state_path.write_text("<state />")
+            artifacts.final_coordinates_path.write_text("ATOM")
+            with (
+                mock.patch("charmm_gui_md.shared.workflows.stage_runner.OpenMMNativeFiles.from_root", return_value=self.files),
+                mock.patch("charmm_gui_md.shared.workflows.stage_runner.OpenMMStageProtocol.from_file", return_value=self.protocol),
+            ):
+                self._runner().run(Path("inputs"), outputs, "step5_production")
+        self.simulation.step.assert_called_once_with(100)
+
     def test_resume_skips_initialization_and_runs_only_remaining_steps(self) -> None:
         self.checkpoint_manager.restore.return_value = 60
 

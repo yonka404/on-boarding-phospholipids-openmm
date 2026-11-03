@@ -18,3 +18,9 @@ workflow, otherwise place it beside the main component that owns the decision.
 
 Keep using Python's built-in `unittest`. Nested test folders need `__init__.py`
 files so `python -m unittest` can discover them.
+
+Recovery coverage includes fake Slurm commands and temporary output directories
+in `workflows/test_simcalc_launchers.py`, CSV/DCD corruption and interrupted
+repair in `simulation/test_recovery.py`, and a tiny real OpenMM Reference-platform
+checkpoint/resume in `workflows/test_checkpoint_recovery.py`. These tests do not
+submit jobs, use production inputs, or run production simulations.

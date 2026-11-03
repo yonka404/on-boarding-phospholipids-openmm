@@ -55,6 +55,7 @@ class StageRunner:
             protocol_path=files.inputs_dir / f"{step_name}.inp",
         )
         artifacts = StageArtifacts.for_stage(outputs_dir, step_name)
+        artifacts.validate_for_run()
         simulation = self.simulation_factory.create(files, protocol)
         # Failed platform initialization must not leave an empty stage directory.
         artifacts.create_directory()

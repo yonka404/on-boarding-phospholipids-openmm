@@ -11,12 +11,14 @@ import subprocess
 import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
 
 from mains._common import system_paths
 
 logger = logging.getLogger(__name__)
+SOLUTION_STAGES = ("step4_equilibration", "step5_production")
 
 
 class LauncherError(RuntimeError):
@@ -97,20 +99,92 @@ def check_files(paths: SolutionPaths) -> None:
             )
 
 
-def check_output(paths: SolutionPaths) -> None:
-    if paths.output_dir.exists() or paths.output_dir.is_symlink():
+@dataclass(frozen=True)
+class OutputAction:
+    mode: str
+    stage: str | None = None
+    checkpoint_stage: str | None = None
+
+
+def check_output(
+    paths: SolutionPaths,
+    expected_mode: str | None = None,
+    expected_checkpoint_stage: str | None = None,
+) -> OutputAction:
+    """Classify files only; OpenMM validates checkpoints on the allocated GPU."""
+    output = paths.output_dir
+    exists = output.exists() or output.is_symlink()
+    if expected_mode == "fresh" and exists:
         raise LauncherError(
-            f"Output already exists: {paths.output_dir}. Inspect it before choosing a new replica ID "
-            "or a recovery procedure."
+            f"Output already exists: {output}. This job was submitted as fresh; inspect the results."
+        )
+    if not exists:
+        if expected_mode == "resume":
+            raise LauncherError(
+                f"Recovery results are missing: {output}. Inspect the paths; refusing to start over."
+            )
+        return OutputAction("fresh", "step4_equilibration")
+
+    def reject(reason: str) -> None:
+        raise LauncherError(f"Cannot recover {output}: {reason}. Inspect results before retrying.")
+
+    if output.is_symlink() or not output.is_dir():
+        reject("output is not a regular directory")
+    stages = SOLUTION_STAGES
+    children = {path.name for path in output.iterdir()}
+    if expected_checkpoint_stage is not None and expected_checkpoint_stage not in children:
+        reject(f"selected checkpoint stage {expected_checkpoint_stage} is missing; refusing to start over")
+    if not children or children - set(stages):
+        reject("empty or unrecognized output directory")
+
+    def usable(path: Path) -> bool:
+        return (
+            not path.is_symlink() and path.is_file()
+            and os.access(path, os.R_OK) and path.stat().st_size > 0
         )
 
+    next_stage = None
+    checkpoint_stage = None
+    for name in stages:
+        stage = output / name
+        if name not in children:
+            if next_stage is None:
+                next_stage = name
+            continue
+        if next_stage is not None:
+            reject(f"inconsistent stage order: {name} exists after incomplete {next_stage}")
+        if stage.is_symlink() or not stage.is_dir():
+            reject(f"{name} is not a regular stage directory")
 
-def check_fresh(paths: SolutionPaths) -> None:
-    check_output(paths)
+        checkpoint = stage / "checkpoint.chk"
+        if checkpoint.exists() or checkpoint.is_symlink():
+            for filename in ("checkpoint.chk", "state_data.csv", "trajectory.dcd"):
+                if not usable(stage / filename):
+                    reject(f"{name} needs a nonempty, readable {filename} for checkpoint recovery")
+            next_stage = name
+            checkpoint_stage = name
+        elif not all(usable(stage / filename) for filename in ("final_state.xml", "final_coordinates.pdb")):
+            reject(f"incomplete {name} has no checkpoint; refusing to overwrite it")
+    return OutputAction("complete") if next_stage is None else OutputAction("resume", next_stage, checkpoint_stage)
+
+
+def check_available(
+    paths: SolutionPaths,
+    expected_mode: str | None = None,
+    expected_checkpoint_stage: str | None = None,
+) -> OutputAction:
     if paths.execution_lock.exists() or paths.execution_lock.is_symlink():
         raise LauncherError(
             f"Execution lock exists: {paths.execution_lock}. Check squeue before considering manual cleanup."
         )
+    return check_output(paths, expected_mode, expected_checkpoint_stage)
+
+
+def log_action(paths: SolutionPaths, action: OutputAction) -> None:
+    if action.mode == "complete":
+        logger.info("System %s is complete; no simulation needed", paths.system_id)
+    else:
+        logger.info("System %s: %s from %s", paths.system_id, action.mode, action.stage)
 
 
 def check_writable(paths: SolutionPaths) -> None:

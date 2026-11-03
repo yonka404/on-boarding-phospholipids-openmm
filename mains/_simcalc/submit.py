@@ -17,11 +17,12 @@ from mains._simcalc.common import (
     Interrupted,
     LauncherError,
     SolutionPaths,
+    check_available,
     check_files,
-    check_fresh,
     check_writable,
     directory_lock,
     interruption_handlers,
+    log_action,
     memory_mb,
     run_command,
     system_name,
@@ -163,7 +164,10 @@ def submit(system_id: str) -> None:
 
     # Always check files and destinations before contacting Slurm; no OpenMM import here.
     check_files(paths)
-    check_fresh(paths)
+    action = check_available(paths)
+    log_action(paths, action)
+    if action.mode == "complete":
+        return
     check_writable(paths)
 
     for command in ("sbatch", "scontrol", "sinfo", "squeue"):
@@ -175,6 +179,10 @@ def submit(system_id: str) -> None:
 
     # One launcher at a time for this replica, including while predicting and submitting.
     with directory_lock(paths.submission_lock, "Submission"):
+        action = check_available(paths, action.mode, action.checkpoint_stage)
+        if action.mode == "complete":
+            log_action(paths, action)
+            return
         check_slurm(paths, resources)
         print(
             "Filesystem space (this does not check your quota or predict trajectory size):",
@@ -192,6 +200,9 @@ def submit(system_id: str) -> None:
             f"--job-name={paths.job_name}",
             f"--output={paths.log_root}/{system_id}-%j.log",
             str(paths.batch_file),
+            *(["--checkpoint-stage", action.checkpoint_stage] if action.checkpoint_stage else []),
+            "--mode",
+            action.mode,
             system_id,
         ]
         # The estimate is advisory. Occupied nodes and missing predictions can still queue.
@@ -204,7 +215,10 @@ def submit(system_id: str) -> None:
             logger.warning(
                 "Start estimate unavailable. Actual submission will determine acceptance."
             )
-        check_fresh(paths)
+        checked = check_available(paths, action.mode, action.checkpoint_stage)
+        if checked.mode == "complete":
+            log_action(paths, checked)
+            return
         try:
             reply = run_command(
                 ["sbatch", "--parsable", *options],

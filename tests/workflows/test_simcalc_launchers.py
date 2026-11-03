@@ -56,7 +56,7 @@ class SimcalcLauncherTests(unittest.TestCase):
         self.calls = Path(self.temp.name) / "calls.jsonl"
         tool = self.bin / "tool"
         tool.write_text("""#!/usr/bin/python3
-import json, os, pathlib, signal, sys, time
+import json, os, pathlib, shutil, signal, sys, time
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ["FAKE_CALLS"], "a") as f:
@@ -85,6 +85,12 @@ elif name == "squeue":
     elif mode == "other_job": print("203|solution-md-other_system|RUNNING")
 elif name == "sbatch":
     if "--test-only" in args:
+        if mode == "new_output":
+            pathlib.Path(os.environ["FAKE_OUTPUT"]).mkdir()
+        if mode == "removed_output":
+            shutil.rmtree(os.environ["FAKE_OUTPUT"])
+        if mode == "removed_stage":
+            shutil.rmtree(os.environ["FAKE_STAGE"])
         if mode == "slow_prediction":
             pathlib.Path(os.environ["FAKE_MARKER"]).touch()
             time.sleep(0.5)
@@ -163,6 +169,149 @@ elif name == "python":
             if command == name
         ]
 
+    def completed_stage(self, name="step4_equilibration"):
+        stage = self.outputs / self.system_id / name
+        stage.mkdir(parents=True, exist_ok=True)
+        (stage / "final_state.xml").write_text("<state />")
+        (stage / "final_coordinates.pdb").write_text("ATOM")
+        return stage
+
+    def interrupted_stage(self, name="step4_equilibration"):
+        stage = self.outputs / self.system_id / name
+        stage.mkdir(parents=True, exist_ok=True)
+        for filename in ("checkpoint.chk", "state_data.csv", "trajectory.dcd"):
+            (stage / filename).write_bytes(b"validated on allocated GPU")
+        return stage
+
+    def test_checkpoint_recovery_is_submitted_and_reaches_cuda_workflow(self):
+        stage = self.interrupted_stage()
+        before = {path.name: path.read_bytes() for path in stage.iterdir()}
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        submission = next(a for a in self.invocations("sbatch") if "--parsable" in a)
+        self.assertEqual(submission[-3:], ["--mode", "resume", self.system_id])
+        result = self.run_script(
+            script="run_solution.slurm", args=["--mode", "resume", self.system_id]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("GPU invocation CUDA 0 mask=2", result.stdout)
+        self.assertEqual(before, {path.name: path.read_bytes() for path in stage.iterdir()})
+        self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
+
+    def test_continuation_between_stages_is_submitted_as_resume(self):
+        self.completed_stage()
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("step5_production", result.stderr)
+        submission = next(a for a in self.invocations("sbatch") if "--parsable" in a)
+        self.assertEqual(submission[-3:], ["--mode", "resume", self.system_id])
+
+    def test_completed_run_is_a_noop_without_slurm(self):
+        self.completed_stage()
+        self.completed_stage("step5_production")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("complete", result.stderr.lower())
+        self.assertFalse(self.calls.exists())
+
+    def test_checkpoint_takes_precedence_during_finalization(self):
+        self.completed_stage()
+        self.interrupted_stage()
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("step4_equilibration", result.stderr)
+
+    def test_missing_recovery_files_and_invalid_stage_order_are_preserved(self):
+        output = self.outputs / self.system_id
+        cases = [
+            {"step4_equilibration": ("checkpoint.chk", "state_data.csv")},
+            {"step4_equilibration": ("state_data.csv", "trajectory.dcd")},
+            {"step5_production": ("final_state.xml", "final_coordinates.pdb")},
+            {"unexpected": ("something",)},
+            {"step4_equilibration": ()},
+            {},
+            {
+                "step4_equilibration": ("checkpoint.chk", "state_data.csv", "trajectory.dcd"),
+                "step5_production": ("final_state.xml", "final_coordinates.pdb"),
+            },
+        ]
+        for stages in cases:
+            with self.subTest(stages=stages):
+                output.mkdir(exist_ok=True)
+                for name, files in stages.items():
+                    stage = output / name
+                    stage.mkdir()
+                    for filename in files:
+                        (stage / filename).write_text("preserve me")
+                before = sorted(str(path.relative_to(output)) for path in output.rglob("*"))
+                result = self.run_script()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("inspect", result.stderr.lower())
+                self.assertEqual(before, sorted(str(path.relative_to(output)) for path in output.rglob("*")))
+                shutil.rmtree(output)
+        self.assertEqual(self.invocations("sbatch"), [])
+
+    def test_queued_resume_refuses_missing_output(self):
+        result = self.run_script(
+            script="run_solution.slurm", args=["--mode", "resume", self.system_id]
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing", result.stderr.lower())
+        self.assertEqual(self.invocations("python"), [])
+
+    def test_queued_fresh_refuses_even_recoverable_output(self):
+        self.interrupted_stage()
+        result = self.run_script(script="run_solution.slurm")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Output already exists", result.stderr)
+        self.assertEqual(self.invocations("python"), [])
+
+    def test_completed_queued_recovery_does_not_start_python(self):
+        self.completed_stage()
+        self.completed_stage("step5_production")
+        result = self.run_script(
+            script="run_solution.slurm", args=["--mode", "resume", self.system_id]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.invocations("python"), [])
+
+    def test_selected_checkpoint_stage_disappearing_while_queued_is_protected(self):
+        self.completed_stage()
+        interrupted = self.interrupted_stage("step5_production")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        submission = next(a for a in self.invocations('sbatch') if '--parsable' in a)
+        batch_index = submission.index(str(self.root / 'mains/_simcalc/run_solution.slurm'))
+        shutil.rmtree(interrupted)
+        result = self.run_script(script='run_solution.slurm', args=submission[batch_index + 1:])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('step5_production', result.stderr)
+        self.assertIn('missing', result.stderr.lower())
+        self.assertEqual(self.invocations('python'), [])
+        self.assertFalse(interrupted.exists())
+
+    def test_selected_checkpoint_stage_disappearing_before_submission_is_protected(self):
+        self.completed_stage()
+        interrupted = self.interrupted_stage('step5_production')
+        self.env['FAKE_STAGE'] = str(interrupted)
+        result = self.run_script(mode='removed_stage')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing', result.stderr.lower())
+        self.assertFalse(any('--parsable' in a for a in self.invocations('sbatch')))
+
+    def test_selected_checkpoint_stage_can_finish_while_queued(self):
+        self.completed_stage()
+        interrupted = self.interrupted_stage('step5_production')
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        submission = next(a for a in self.invocations('sbatch') if '--parsable' in a)
+        batch_index = submission.index(str(self.root / 'mains/_simcalc/run_solution.slurm'))
+        (interrupted / 'checkpoint.chk').unlink()
+        self.completed_stage('step5_production')
+        result = self.run_script(script='run_solution.slurm', args=submission[batch_index + 1:])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.invocations('python'), [])
+
     def test_queues_on_busy_nodes_and_forwards_exact_system(self):
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -171,6 +320,7 @@ elif name == "python":
         submissions = [a for a in self.invocations("sbatch") if "--parsable" in a]
         self.assertEqual(len(submissions), 1)
         self.assertEqual(submissions[0][-1], self.system_id)
+        self.assertEqual(submissions[0][-3:-1], ["--mode", "fresh"])
         self.assertFalse(any("nodelist" in arg for arg in submissions[0]))
         self.assertFalse((self.outputs / self.system_id).exists())
         self.assertEqual(self.invocations("python"), [])
@@ -326,6 +476,13 @@ elif name == "python":
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
 
     def test_simultaneous_submission_is_blocked(self):
+        self.assert_simultaneous_submission_is_blocked()
+
+    def test_simultaneous_recovery_submission_is_blocked(self):
+        self.interrupted_stage()
+        self.assert_simultaneous_submission_is_blocked()
+
+    def assert_simultaneous_submission_is_blocked(self):
         marker = Path(self.temp.name) / "predicting"
         env = dict(self.env, FAKE_MODE="slow_prediction", FAKE_MARKER=str(marker))
         with subprocess.Popen(
@@ -349,6 +506,48 @@ elif name == "python":
             stdout, stderr = first.communicate(timeout=3)
             self.assertEqual(first.returncode, 0, stdout + stderr)
         self.assertEqual(sum("--parsable" in a for a in self.invocations("sbatch")), 1)
+
+    def test_output_mode_changes_during_prediction_prevent_submission(self):
+        self.env['FAKE_OUTPUT'] = str(self.outputs / self.system_id)
+        result = self.run_script(mode='new_output')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Output already exists', result.stderr)
+        self.interrupted_stage()
+        result = self.run_script(mode='removed_output')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing', result.stderr)
+        self.assertFalse(any('--parsable' in a for a in self.invocations('sbatch')))
+        self.assertFalse((self.root / 'mains/logs' / f'.{self.system_id}.submit.lock').exists())
+
+    def test_recovery_results_removed_during_execution_lock_acquisition_stop_job(self):
+        from mains._simcalc import common, run_solution
+
+        self.completed_stage()
+        interrupted = self.interrupted_stage('step5_production')
+        mkdir = Path.mkdir
+
+        def acquire(path, *args, **kwargs):
+            if path.name == f'.{self.system_id}.lock':
+                shutil.rmtree(interrupted)
+            return mkdir(path, *args, **kwargs)
+
+        original_directory = Path.cwd()
+        self.addCleanup(os.chdir, original_directory)
+        with (
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(Path, 'mkdir', acquire),
+            self.assertRaisesRegex(common.LauncherError, 'missing'),
+        ):
+            run_solution.run_job(self.system_id, 'resume', 'step5_production')
+        self.assertEqual(self.invocations('python'), [])
+        self.assertFalse((self.outputs / f'.{self.system_id}.lock').exists())
+
+    def test_recovery_duplicate_job_is_refused(self):
+        self.interrupted_stage()
+        result = self.run_script(mode='duplicate')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('already RUNNING', result.stderr)
+        self.assertEqual(self.invocations('sbatch'), [])
 
     def test_missing_slurm_command_prevents_submission(self):
         (self.bin / "sinfo").unlink()

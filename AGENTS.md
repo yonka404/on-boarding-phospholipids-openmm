@@ -61,8 +61,9 @@ uv run python mains/local.py membrane SYSTEM_ID --stage step6.1_equilibration
 python3 mains/simcalc.py SYSTEM_ID
 ```
 
-Local runs default to the full protocol. SIMCALC currently supports fresh full
-solution runs only. Both launchers resolve data paths from the repository root.
+Local runs default to the full protocol. SIMCALC starts or recovers full solution
+runs automatically and exits without submitting when all stages are complete.
+Both launchers resolve data paths from the repository root.
 
 The [SIMCALC cluster user's guide](http://salses.upc.es/SIMCON/simcalc.html)
 is the reference for Slurm usage and cluster policies. Consult it when changing
@@ -87,8 +88,11 @@ and compatible with system Python 3.8+. Use system `python3` on the login node,
 not `uv run` or the project environment. After allocation and the glibc check,
 the node runner uses `.venv/bin/python` (Python 3.12.10+) for validation and MD.
 
-Preserve fresh-output protection, duplicate-job checks, lock ownership,
-interruption cleanup, and mandatory CUDA on SIMCALC. Logs and submission locks
+Preserve automatic output classification, queued fresh/resume mode protection,
+duplicate-job checks, lock ownership, interruption cleanup, and mandatory CUDA
+on SIMCALC. Recovery must load the checkpoint and validate both reporter prefixes
+before append, finish backups before replacing affected files, and refuse
+incomplete stages without checkpoints. Logs and submission locks
 live in `mains/logs/`; execution locks stay alongside system outputs. Do not
 replace shared code while jobs using it are queued or running. See `README.md`
 for deployment, PyCharm submission, and migration instructions.

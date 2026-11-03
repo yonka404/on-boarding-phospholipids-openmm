@@ -80,6 +80,29 @@ class RunnerApiTests(unittest.TestCase):
             step_name="step5_production",
         )
 
+    def test_sweep_rejects_out_of_order_results_before_running_any_stage(self) -> None:
+        stage_runner = mock.Mock()
+        runner = SweepRunner(profile=SOLUTION_PROFILE, stage_runner=stage_runner)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs = Path(tmpdir)
+            later = StageArtifacts.for_stage(outputs, "step5_production")
+            later.create_directory()
+            later.final_state_path.write_text("<state />")
+            later.final_coordinates_path.write_text("ATOM")
+            with self.assertRaisesRegex(RuntimeError, "stage order"):
+                runner.run(Path("inputs"), outputs)
+        stage_runner.run.assert_not_called()
+
+    def test_sweep_rejects_empty_stage_before_running(self) -> None:
+        stage_runner = mock.Mock()
+        runner = SweepRunner(profile=SOLUTION_PROFILE, stage_runner=stage_runner)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outputs = Path(tmpdir)
+            StageArtifacts.for_stage(outputs, "step4_equilibration").create_directory()
+            with self.assertRaisesRegex(RuntimeError, "incomplete.*checkpoint"):
+                runner.run(Path("inputs"), outputs)
+        stage_runner.run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

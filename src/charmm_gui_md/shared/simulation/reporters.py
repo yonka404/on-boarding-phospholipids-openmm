@@ -69,7 +69,7 @@ class StageReporterInstaller:
             )
         )
 
-        logger.info(
+        logger.debug(
             "[%s] Reporting state data to %s, trajectory to %s, and checkpoints to %s",
             protocol.step_name,
             artifacts.state_data_path,

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mains._common import PROJECT_ROOT
+from mains._console import Console, configure_logging
 from mains._simcalc.common import (
     Interrupted,
     LauncherError,
@@ -22,7 +23,6 @@ from mains._simcalc.common import (
     check_writable,
     directory_lock,
     interruption_handlers,
-    log_action,
     memory_mb,
     run_command,
     system_name,
@@ -121,11 +121,7 @@ def check_slurm(paths: SolutionPaths, resources: Resources) -> None:
         "Cannot read GPU node availability",
         capture=True,
     )
-    print(
-        "GPU node availability (node | state | GPUs | CPUs | RAM MiB):\n"
-        + nodes.stdout,
-        flush=True,
-    )
+    logger.debug("GPU node availability (node | state | GPUs | CPUs | RAM MiB):\n%s", nodes.stdout)
     if not any(
         node_has_capacity(row, resources)
         for row in nodes.stdout.splitlines()
@@ -161,13 +157,18 @@ def node_has_capacity(row: str, resources: Resources) -> bool:
 def submit(system_id: str) -> None:
     paths = SolutionPaths(PROJECT_ROOT, system_id)
     os.chdir(paths.project_root)
+    console = Console()
+    console.heading("SIMCALC · Solution simulation")
+    console.line()
+    console.field("System", system_id)
 
     # Always check files and destinations before contacting Slurm; no OpenMM import here.
     check_files(paths)
     action = check_available(paths)
-    log_action(paths, action)
     if action.mode == "complete":
+        console.field("Action", "Complete — no job submitted", tone="green")
         return
+    console.field("Action", f"{'Fresh run' if action.mode == 'fresh' else 'Resume'} from {action.stage}")
     check_writable(paths)
 
     for command in ("sbatch", "scontrol", "sinfo", "squeue"):
@@ -176,24 +177,21 @@ def submit(system_id: str) -> None:
                 f"Required command is missing: {command}. Run this on the SIMCALC login node."
             )
     resources = Resources.from_batch_file(paths.batch_file)
+    console.field("Resources", f"1 GPU · {resources.cpus} CPU cores · {resources.memory / 1024:g} GiB RAM · {resources.walltime / 86400:g} days")
+    console.line()
+    console.field("Checks", "OK — files, output safety, writable paths", tone="green")
 
     # One launcher at a time for this replica, including while predicting and submitting.
     with directory_lock(paths.submission_lock, "Submission"):
         action = check_available(paths, action.mode, action.checkpoint_stage)
         if action.mode == "complete":
-            log_action(paths, action)
+            console.field("Action", "Complete — no job submitted", tone="green")
             return
         check_slurm(paths, resources)
-        print(
-            "Filesystem space (this does not check your quota or predict trajectory size):",
-            flush=True,
-        )
+        console.field("", "OK — Slurm, partition limits, compatible nodes", tone="green")
         for directory in (paths.output_root, paths.log_root):
             usage = shutil.disk_usage(directory)
-            print(
-                f"{directory}: {usage.free / 1024**3:.1f} GiB available / {usage.total / 1024**3:.1f} GiB total",
-                flush=True,
-            )
+            logger.debug("%s: %.1f GiB free / %.1f GiB total (not an account quota check)", directory, usage.free / 1024**3, usage.total / 1024**3)
 
         options = [
             f"--chdir={paths.project_root}",
@@ -209,15 +207,19 @@ def submit(system_id: str) -> None:
         estimate = run_command(
             ["sbatch", "--test-only", *options],
             "Start estimate unavailable",
+            capture=True,
             check=False,
         )
-        if estimate.returncode != 0:
-            logger.warning(
-                "Start estimate unavailable. Actual submission will determine acceptance."
-            )
+        advisory = estimate.stdout + "\n" + estimate.stderr
+        logger.debug("Slurm advisory response (exit %s):\n%s", estimate.returncode, advisory.strip())
+        if estimate.returncode != 0 and advisory.strip():
+            logger.warning("Start estimate unavailable (advisory):\n%s", advisory.strip())
+        predicted = re.search(r"\bto start at\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\b", advisory) if estimate.returncode == 0 else None
+        console.line()
+        console.field("Start", f"{predicted[1]} (advisory)" if predicted else "Estimate unavailable (advisory); submission can still queue", tone=None if predicted else "yellow")
         checked = check_available(paths, action.mode, action.checkpoint_stage)
         if checked.mode == "complete":
-            log_action(paths, checked)
+            console.field("Action", "Complete — no job submitted", tone="green")
             return
         try:
             reply = run_command(
@@ -235,17 +237,15 @@ def submit(system_id: str) -> None:
             raise LauncherError(
                 f"Slurm replied: {reply.stdout.strip()}. Submission may have succeeded; inspect squeue before retrying."
             )
-        print(f"Submitted system {system_id} as job {job_id}.", flush=True)
-        print(f"Log: {paths.log_root}/{system_id}-{job_id}.log")
-        print(f"Status: squeue -j {job_id}")
-        print(
-            f"Follow log after the job starts: tail -f '{paths.log_root}/{system_id}-{job_id}.log'",
-            flush=True,
-        )
+        console.line()
+        console.field("SUBMITTED", f"Job {job_id} accepted by Slurm", tone="green")
+        console.field("Log", paths.log_root / f"{system_id}-{job_id}.log")
+        console.line()
+        console.field("Status", "python3 mains/status.py")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    configure_logging(timestamps=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("system_id", type=system_name)
     args = parser.parse_args(argv)

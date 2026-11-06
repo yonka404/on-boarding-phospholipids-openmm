@@ -13,6 +13,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from mains._console import configure_logging
 from mains._simcalc.common import (
     SOLUTION_STAGES,
     Interrupted,
@@ -66,6 +67,7 @@ def run_job(system_id: str, mode: str = "fresh", checkpoint_stage: str | None = 
             raise LauncherError(
                 f"Node has {libc!r}; OpenMM requires glibc 2.34+. Ask SIMCALC support about this node."
             )
+        logger.info("Node runtime: %s; CUDA required", libc)
 
         # Leave CUDA_VISIBLE_DEVICES intact. Device 0 is Slurm's first visible GPU.
         os.environ["OPENMM_PLATFORM"] = "CUDA"
@@ -89,7 +91,7 @@ def run_job(system_id: str, mode: str = "fresh", checkpoint_stage: str | None = 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    configure_logging()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("system_id", type=system_name)
     parser.add_argument("--mode", choices=("fresh", "resume"), default="fresh")

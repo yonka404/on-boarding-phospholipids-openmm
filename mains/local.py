@@ -1,7 +1,6 @@
 """Run a membrane or solution protocol directly, or select one stage with --stage."""
 
 import argparse
-import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -10,6 +9,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mains._common import system_id_argument, system_paths
+from mains._console import configure_logging
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -19,11 +19,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--stage", help="Run one protocol stage instead of the full protocol.")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s %(filename)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    configure_logging()
     # Keep help available without importing OpenMM or starting runtime bootstrap.
     from charmm_gui_md import membrane, solution
 

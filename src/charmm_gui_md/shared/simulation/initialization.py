@@ -35,7 +35,7 @@ class SimulationInitializer:
         coordinates_pdb = PDBFile(str(restart_source.coordinates_path))
         simulation.context.setPositions(coordinates_pdb.positions)
 
-        logger.info(
+        logger.debug(
             "[%s] Loaded coordinates from %s: %s",
             protocol.step_name,
             restart_source.description,
@@ -57,7 +57,7 @@ class SimulationInitializer:
         simulation.context.setVelocitiesToTemperature(target_temperature * kelvin)
 
         if protocol.generate_velocities:
-            logger.info(
+            logger.debug(
                 "[%s] Generated initial velocities at %.2f K",
                 protocol.step_name,
                 target_temperature,

@@ -31,11 +31,11 @@ class StageOutputWriter:
             )
 
         logger.info(
-            "[%s] Wrote restart state to %s",
+            "[%s] Saved final state and coordinates in %s",
             protocol.step_name,
-            artifacts.final_state_path,
+            artifacts.output_dir,
         )
-        logger.info(
+        logger.debug(
             "[%s] Wrote final coordinates to %s",
             protocol.step_name,
             artifacts.final_coordinates_path,

@@ -96,8 +96,90 @@ directory. In an IDE or another directory, use the absolute script path and,
 for local runs, the project's `.venv` interpreter.
 
 Launch support lives in `mains/_common.py` and `mains/_simcalc/`; the latter's
-scripts are internal Slurm helpers. Simulation implementations and public
-workflow APIs live in `src/charmm_gui_md/`.
+scripts are internal Slurm helpers. Shared console formatting lives in
+`mains/_console.py`, and read-only status collection and rendering in
+`mains/_status.py`. Simulation implementations and public workflow APIs live
+in `src/charmm_gui_md/`.
+
+## Checking simulation status
+
+Use the same command on your local PC or the SIMCALC login node:
+
+```bash
+python3 mains/status.py
+```
+
+It prints one snapshot and exits. Run it again for an update, or use another
+terminal while a local simulation runs. It needs only system Python 3.8+;
+OpenMM, the project environment, and Slurm are not required on your PC.
+It reads this checkout's results and activity on the machine where it runs;
+it does not connect from your PC to SIMCALC.
+
+The report includes solution and membrane systems with outputs, existing
+SIMCALC job logs, or a matching active launcher/job. Systems with inputs alone
+are excluded. Active systems come first, then unfinished or unknown systems,
+then completed systems. Completed systems are included automatically.
+
+An illustrative comparison table is:
+
+```text
+System                                Job/PID  State    Stage              Stage %  ns/day  Stage ETA  Report age
+solution/abeta42_7q4m_8bfa_replica_2  321      RUNNING  2/2 Production       64.0%    13.4  ~13d 10h   28s
+solution/abeta42_7q4m_8bfa_replica_3  322      QUEUED   1/2 Equilibration        -       -  -          -
+```
+
+Full system names are preserved. The stage number is its position in the full
+protocol; `2/2 Production` means the second of two stages. Local processes use
+identifiers such as `PID 4128`. Short details follow the table for active and
+unfinished systems: the exact stage name, simulated/target nanoseconds and
+steps, completed-stage count, and available job timing, node, and log path.
+Queued jobs show their waiting reason. Missing or unreadable information is
+explained there. Narrow terminals automatically use stacked blocks with the
+same information; there are no extra monitoring flags or detail modes.
+
+`RUNNING` confirms a live launcher or a running Slurm job, rather than proving
+that integration is currently advancing. Local detection recognizes Python
+processes running this checkout's `mains/local.py`, including `--stage`, through
+Linux `/proc`. Slurm discovery uses one current-user query per snapshot and
+matches both this project directory and its job-name prefix. A Slurm query
+times out after five seconds; unavailable scheduler or process information is
+shown explicitly. `UNFINISHED` means results remain incomplete without a known
+active launcher/job; it does not establish failure. `UNREADABLE` calls for
+inspection of the reported files. A checkpoint's presence does not establish
+that it can be loaded: recovery still validates it on the execution platform.
+
+**Progress and ETA refer to the shown stage, not the whole protocol.** Percentage
+uses `Step / nstep`, and simulated nanoseconds use `Step × dt / 1000` from that
+stage's input. CSV simulation time can include earlier stages and is not used
+for progress. Recovery can roll the last reported step back to its checkpoint.
+Old reports from before a new running execution are identified rather than
+presented as measurements from the new execution.
+
+The approximate stage ETA uses the latest finite positive speed in a bounded
+CSV tail, without borrowing a speed from before OpenMM's startup marker.
+During recovery, a freshly rewritten CSV can contain only retained old rows.
+When a recent recovery backup identifies that prefix, speed and ETA wait until
+a speed-bearing step exceeds the pre-recovery report. Progress still shows the
+retained checkpoint steps. ETA is shown only for a confirmed running simulation
+with usable measurements, and assumes the reported speed continues. It excludes later
+stages, queue time, and setup/finalization work. Slurm's remaining allocation
+time is a separate scheduler value. Report age is the CSV file's modification
+age, not a process heartbeat or an exact timestamp for its last valid row.
+
+Completion requires readable, nonempty `final_state.xml` and
+`final_coordinates.pdb` files and no checkpoint in every scheduled stage.
+Finishing one selected local stage does not complete the full protocol.
+Status reads bounded CSV headers/tails and file metadata; it does not load
+checkpoints, read trajectories, create files, modify locks, submit/cancel jobs,
+or stop simulations. Ctrl+C affects only the status command.
+
+Submission, status, and runtime output use restrained colours on supported
+terminals. `NO_COLOR` or `TERM=dumb` disables colour; redirected output and
+Slurm log files contain plain text. Submission shows grouped check results,
+resources, the advisory start estimate, and the actual accepted job ID. Node
+tables and repetitive setup diagnostics stay at DEBUG; actionable warnings and
+failed-command diagnostics, including failed advisory checks, remain visible
+automatically, without extra flags.
 
 ## SIMCALC GPU jobs
 
@@ -170,7 +252,7 @@ before that stage writes output. CUDA is mandatory; CPU cores still handle
 preparation and coordination.
 
 Logs are saved as `mains/logs/SYSTEM_ID-JOB_ID.log`. The launcher prints the job
-ID and commands for checking its status and reading its log. Owned locks are
+ID, log path, and `python3 mains/status.py` for checking progress. Owned locks are
 released on normal completion or failure; interruption stops the active child
 before releasing its lock. A forced kill or node crash can leave a lock for
 manual inspection. If submission is interrupted or returns an unrecognized

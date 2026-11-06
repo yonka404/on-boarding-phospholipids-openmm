@@ -34,7 +34,9 @@ class SimcalcValidationTests(unittest.TestCase):
 
     def test_success_reports_allocation_without_creating_outputs(self) -> None:
         output = self.run_validation()
-        self.assertIn("Allocation validated system=replica_2 job=203", output)
+        self.assertIn("Validated system=replica_2 job=203", output)
+        for label in ("Allocation", "Environment", "Platform", "Output"):
+            self.assertIn(label, output)
         self.assertIn("requested_platform=CUDA", output)
         self.assertIn("GPU-1234-abcd", output)
         self.assertIn("Python=", output)

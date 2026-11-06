@@ -24,7 +24,7 @@ class SimcalcLauncherTests(unittest.TestCase):
         self.root.mkdir()
         (self.root / "mains/_simcalc").mkdir(parents=True)
         for name in (
-            "__init__.py", "_common.py", "local.py", "simcalc.py",
+            "__init__.py", "_common.py", "_console.py", "_status.py", "status.py", "local.py", "simcalc.py",
             "_simcalc/__init__.py", "_simcalc/submit.py", "_simcalc/common.py",
             "_simcalc/run_solution.py", "_simcalc/run_solution.slurm",
         ):
@@ -97,7 +97,10 @@ elif name == "sbatch":
         if mode == "no_estimate":
             print("Start estimate unavailable", file=sys.stderr)
             sys.exit(1)
-        print("Job would start later")
+        if mode == "predicted_start":
+            print("sbatch: Job 999 to start at 2026-11-04T08:00:00 using 4 processors", file=sys.stderr)
+        else:
+            print("Job would start later")
     elif mode == "submit_fail":
         print("Submission refused", file=sys.stderr)
         sys.exit(1)
@@ -202,7 +205,7 @@ elif name == "python":
         self.completed_stage()
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("step5_production", result.stderr)
+        self.assertIn("step5_production", result.stdout)
         submission = next(a for a in self.invocations("sbatch") if "--parsable" in a)
         self.assertEqual(submission[-3:], ["--mode", "resume", self.system_id])
 
@@ -211,7 +214,7 @@ elif name == "python":
         self.completed_stage("step5_production")
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("complete", result.stderr.lower())
+        self.assertIn("complete", result.stdout.lower())
         self.assertFalse(self.calls.exists())
 
     def test_checkpoint_takes_precedence_during_finalization(self):
@@ -219,7 +222,7 @@ elif name == "python":
         self.interrupted_stage()
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("step4_equilibration", result.stderr)
+        self.assertIn("step4_equilibration", result.stdout)
 
     def test_missing_recovery_files_and_invalid_stage_order_are_preserved(self):
         output = self.outputs / self.system_id
@@ -339,6 +342,47 @@ elif name == "python":
         result = self.run_script(mode="no_estimate")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sum("--parsable" in a for a in self.invocations("sbatch")), 1)
+        self.assertIn("Start estimate unavailable", result.stderr)
+
+    def test_submission_is_readable_without_successful_command_dumps(self):
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for label in ("System", "Action", "Resources", "Checks", "Start", "SUBMITTED", "Log", "Status"):
+            self.assertIn(label, result.stdout)
+        self.assertIn("1 GPU", result.stdout)
+        self.assertIn("4 CPU cores", result.stdout)
+        self.assertIn("16 GiB", result.stdout)
+        self.assertIn("7 days", result.stdout)
+        self.assertIn("python3 mains/status.py", result.stdout)
+        self.assertNotIn("GPU node availability", result.stdout)
+        self.assertNotIn("GiB available /", result.stdout)
+        self.assertNotIn("Job would start later", result.stdout)
+        self.assertNotIn("tail -f", result.stdout)
+        self.assertNotIn("squeue -j", result.stdout)
+        self.assertNotIn("\x1b", result.stdout + result.stderr)
+
+    def test_advisory_job_id_is_not_presented_as_accepted_job_id(self):
+        result = self.run_script(mode="predicted_start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("2026-11-04T08:00:00", result.stdout)
+        self.assertIn("advisory", result.stdout)
+        self.assertIn("Job 321 accepted", result.stdout)
+        self.assertNotIn("999", result.stdout + result.stderr)
+        self.assertEqual(len(self.invocations("sbatch")), 2)
+
+    def test_required_command_failure_shows_captured_diagnostic(self):
+        result = self.run_script(mode="submit_fail")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Submission refused", result.stderr)
+        self.assertNotIn("SUBMITTED", result.stdout)
+
+    def test_no_new_user_facing_flags_are_introduced(self):
+        for flag in ("--verbose", "--status", "--watch", "--all", "--test-only"):
+            with self.subTest(flag=flag):
+                result = self.run_script(args=[self.system_id, flag])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unrecognized arguments", result.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_bad_arguments_do_not_contact_slurm(self):
         for args in ([], ["../bad"], ["."], [".."], ["a", "b"], ["a b"], ["a;touch x"]):
@@ -592,7 +636,7 @@ elif name == "python":
 
     def test_bootstrap_syntax_supports_python_38(self):
         for name in (
-            "__init__.py", "_common.py", "simcalc.py", "_simcalc/__init__.py",
+            "__init__.py", "_common.py", "_console.py", "_status.py", "status.py", "simcalc.py", "_simcalc/__init__.py",
             "_simcalc/submit.py", "_simcalc/common.py", "_simcalc/run_solution.py",
         ):
             with self.subTest(name=name):
@@ -623,7 +667,7 @@ elif name == "python":
     def test_federated_reply_extracts_job_id(self):
         result = self.run_script(mode="federated")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("squeue -j 321", result.stdout)
+        self.assertIn("Job 321 accepted", result.stdout)
         self.assertIn("test_replica_2-321.log", result.stdout)
 
     def test_module_failure_prevents_project_python(self):

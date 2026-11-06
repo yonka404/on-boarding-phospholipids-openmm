@@ -12,6 +12,8 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from mains._console import Console
+
 
 def validate_solution(system_id: str) -> None:
     """Check allocation metadata; the simulation owns input and CUDA validation."""
@@ -32,13 +34,11 @@ def validate_solution(system_id: str) -> None:
 
     system_id = system_id_argument(system_id)
     _, outputs_dir = system_paths("solution", system_id)
-    print(
-        f"Allocation validated system={system_id} job={job_id} host={socket.gethostname()}\n"
-        f"Python={platform.python_version()} OpenMM={metadata.version('openmm')} "
-        f"requested_platform=CUDA device=0 (Slurm GPU {visible_gpu})\n"
-        f"Output={outputs_dir.resolve()}",
-        flush=True,
-    )
+    console = Console()
+    console.field("Allocation", f"Validated system={system_id} job={job_id} host={socket.gethostname()}", tone="green")
+    console.field("Environment", f"Python={platform.python_version()} OpenMM={metadata.version('openmm')}")
+    console.field("Platform", f"requested_platform=CUDA device=0 (Slurm GPU {visible_gpu})")
+    console.field("Output", outputs_dir.resolve())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         validate_solution(args.system_id)
     except (ImportError, OSError, RuntimeError, ValueError, argparse.ArgumentTypeError) as exc:
-        print(f"ERROR [GPU allocation]: {exc}", file=sys.stderr)
+        Console(sys.stderr).field("ERROR", f"GPU allocation: {exc}", tone="red")
         return 1
     return 0
 

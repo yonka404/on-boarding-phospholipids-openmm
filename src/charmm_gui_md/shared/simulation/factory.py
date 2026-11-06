@@ -125,7 +125,7 @@ class OpenMMSimulationFactory:
                         "but is not available in this OpenMM installation."
                     ) from exc
 
-                logger.info(
+                logger.debug(
                     "[%s] Skipping unavailable OpenMM platform %s: %s",
                     step_name,
                     platform_name,

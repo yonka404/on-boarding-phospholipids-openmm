@@ -16,6 +16,7 @@ from pathlib import Path
 from types import FrameType
 
 from mains._common import system_paths
+from mains._console import clean_text
 
 logger = logging.getLogger(__name__)
 SOLUTION_STAGES = ("step4_equilibration", "step5_production")
@@ -63,6 +64,9 @@ def check_files(paths: SolutionPaths) -> None:
         "uv.lock",
         "mains/__init__.py",
         "mains/_common.py",
+        "mains/_console.py",
+        "mains/_status.py",
+        "mains/status.py",
         "mains/local.py",
         "mains/_simcalc/__init__.py",
         "mains/_simcalc/common.py",
@@ -261,7 +265,7 @@ def run_command(
     capture: bool = False,
     check: bool = True,
 ) -> subprocess.CompletedProcess:
-    # Argument lists avoid shell quoting. Child diagnostics go straight to the console/log.
+    # Argument lists avoid shell quoting. Captured failures retain both diagnostics.
     with ExitStack() as cleanup:
         child = None
         try:
@@ -271,12 +275,13 @@ def run_command(
                     subprocess.Popen(
                         arguments,
                         stdout=subprocess.PIPE if capture else None,
+                        stderr=subprocess.PIPE if capture else None,
                         text=True,
                     )
                 )
             if pending:
                 raise Interrupted(pending[0])
-            stdout, _ = child.communicate()
+            stdout, stderr = child.communicate()
         except Interrupted as exc:
             if child is None:
                 raise
@@ -296,10 +301,12 @@ def run_command(
                 for sig, handler in previous.items():
                     signal.signal(sig, handler)
             raise
-    result = subprocess.CompletedProcess(arguments, child.returncode, stdout or "")
+    result = subprocess.CompletedProcess(arguments, child.returncode, stdout or "", stderr or "")
     if check and result.returncode != 0:
+        diagnostic = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+        detail = "\n" + clean_text(diagnostic) if diagnostic else " Review the diagnostic above."
         raise LauncherError(
-            f"{failure} (exit {result.returncode}). Review the diagnostic above."
+            f"{failure} (exit {result.returncode}).{detail}"
         )
     return result
 

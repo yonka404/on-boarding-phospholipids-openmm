@@ -32,3 +32,9 @@ table/stacked formatting, and a system-Python snapshot that must create no
 files or caches. `runtime/test_console.py` covers colour selection and plain
 runtime logs; launcher tests cover concise submission and captured failure
 diagnostics. Local input bundles are not needed by these tests.
+
+The GPU smoke test is skipped by default. Run it explicitly with
+`OPENMM_GPU_SMOKE=1 OPENMM_PLATFORM=OpenCL uv run --locked python -m unittest tests.simulation.test_gpu_smoke -v`
+on AMD, or use `OPENMM_PLATFORM=CUDA` in a SIMCALC GPU allocation with the
+NVIDIA extra installed. It runs five periodic PME steps, checks finite energy,
+and requires the requested GPU backend. See README.md for per-node commands.

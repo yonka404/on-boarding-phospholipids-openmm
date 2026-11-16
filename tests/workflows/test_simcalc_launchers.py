@@ -486,10 +486,24 @@ elif name == "python":
         self.assertFalse((self.outputs / self.system_id).exists())
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
 
-    def test_old_glibc_fails_before_project_python(self):
-        self.env["FAKE_GLIBC"] = "2.31"
-        self.assertNotEqual(self.run_script(script="run_solution.slurm").returncode, 0)
-        self.assertEqual(self.invocations("python"), [])
+    def test_supported_glibc_reaches_project_python(self):
+        for version in ("2.28", "2.31", "2.39", "3.0"):
+            with self.subTest(version=version):
+                self.env["FAKE_GLIBC"] = version
+                result = self.run_script(script="run_solution.slurm", mode="allocation_fail")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Allocation validation failed", result.stderr)
+                self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
+
+    def test_old_or_malformed_glibc_fails_before_project_python(self):
+        for version in ("2.27", "1.99", "unknown", "2", "2.31-extra"):
+            with self.subTest(version=version):
+                self.env["FAKE_GLIBC"] = version
+                result = self.run_script(script="run_solution.slurm")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("glibc 2.28+", result.stderr)
+                self.assertEqual(self.invocations("python"), [])
+                self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
 
     def test_job_cannot_run_outside_allocation(self):
         self.env.pop("SLURM_JOB_ID")

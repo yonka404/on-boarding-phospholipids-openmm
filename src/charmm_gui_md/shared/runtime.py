@@ -3,8 +3,9 @@ import logging
 import os
 import platform
 import shutil
+from collections.abc import Mapping
+from importlib import metadata
 from pathlib import Path
-from typing import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,11 @@ def bootstrap_openmm_runtime() -> None:
     if os.environ.get("CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP") == "1":
         return
     if platform.system() != "Linux":
+        return
+
+    try:
+        metadata.version("openmm-hip-7")
+    except metadata.PackageNotFoundError:
         return
 
     roots = discover_rocm_roots()

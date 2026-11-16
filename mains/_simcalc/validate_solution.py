@@ -1,6 +1,7 @@
 """Check the Slurm GPU allocation and report the simulation startup settings."""
 
 import argparse
+import importlib
 import os
 import platform
 import re
@@ -16,9 +17,10 @@ from mains._console import Console
 
 
 def validate_solution(system_id: str) -> None:
-    """Check allocation metadata; the simulation owns input and CUDA validation."""
-    if sys.version_info < (3, 12, 10):
-        raise RuntimeError("Python 3.12.10 or newer is required; rebuild the project .venv.")
+    """Check allocation and binary loading; the workflow owns CUDA contexts."""
+    rebuild = "Rebuild the project .venv with uv sync --locked --extra nvidia."
+    if not (3, 12, 10) <= sys.version_info < (3, 13):
+        raise RuntimeError("Python 3.12.10+ within the 3.12 series is required. " + rebuild)
 
     job_id = os.environ.get("SLURM_JOB_ID", "")
     if not job_id.isdecimal():
@@ -30,13 +32,25 @@ def validate_solution(system_id: str) -> None:
             "do not override Slurm's GPU visibility."
         )
 
+    for package in ("openmm", "openmm-cuda-12"):
+        try:
+            version = metadata.version(package)
+        except metadata.PackageNotFoundError as exc:
+            raise RuntimeError(f"{package}==8.3.1 is missing. {rebuild}") from exc
+        if version != "8.3.1":
+            raise RuntimeError(f"{package}==8.3.1 is required; found {version}. {rebuild}")
+    try:
+        importlib.import_module("openmm")
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(f"OpenMM binary import failed: {exc}. {rebuild}") from exc
+
     from mains._common import system_id_argument, system_paths
 
     system_id = system_id_argument(system_id)
     _, outputs_dir = system_paths("solution", system_id)
     console = Console()
     console.field("Allocation", f"Validated system={system_id} job={job_id} host={socket.gethostname()}", tone="green")
-    console.field("Environment", f"Python={platform.python_version()} OpenMM={metadata.version('openmm')}")
+    console.field("Environment", f"Python={platform.python_version()} OpenMM={metadata.version('openmm')} CUDA-plugin={metadata.version('openmm-cuda-12')}")
     console.field("Platform", f"requested_platform=CUDA device=0 (Slurm GPU {visible_gpu})")
     console.field("Output", outputs_dir.resolve())
 

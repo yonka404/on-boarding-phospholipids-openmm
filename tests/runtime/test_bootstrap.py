@@ -27,6 +27,18 @@ class RuntimeBootstrapTests(unittest.TestCase):
 
         system.assert_not_called()
 
+    def test_default_without_hip_plugin_skips_preloading(self) -> None:
+        from importlib import metadata
+
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(runtime.platform, "system", return_value="Linux"),
+            mock.patch("importlib.metadata.version", side_effect=metadata.PackageNotFoundError("openmm-hip-7")),
+            mock.patch.object(runtime, "preload_shared_libraries", side_effect=AssertionError("HIP must not load")),
+            mock.patch.object(runtime, "discover_rocm_roots", side_effect=AssertionError("HIP discovery must be skipped")),
+        ):
+            runtime.bootstrap_openmm_runtime()
+
     def test_discover_rocm_roots_orders_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             opt_root = Path(tmpdir)
@@ -73,6 +85,7 @@ class RuntimeBootstrapTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("importlib.metadata.version", return_value="8.5.0"),
             mock.patch(
                 "charmm_gui_md.shared.runtime.platform.system", return_value="Linux"
             ),

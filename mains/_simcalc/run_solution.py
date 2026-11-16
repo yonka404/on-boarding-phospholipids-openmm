@@ -56,16 +56,16 @@ def run_job(system_id: str, mode: str = "fresh", checkpoint_stage: str | None = 
         if action.mode == "complete":
             return 0
 
-        # Use system Python until glibc is checked; the OpenMM wheels need glibc 2.34+.
+        # Use system Python until glibc is checked; the OpenMM wheels need glibc 2.28+.
         libc = run_command(
             ["getconf", "GNU_LIBC_VERSION"],
             "Cannot determine node glibc version",
             capture=True,
         ).stdout.strip()
         match = re.fullmatch(r"glibc ([0-9]+)\.([0-9]+)", libc)
-        if not match or (int(match[1]), int(match[2])) < (2, 34):
+        if not match or (int(match[1]), int(match[2])) < (2, 28):
             raise LauncherError(
-                f"Node has {libc!r}; OpenMM requires glibc 2.34+. Ask SIMCALC support about this node."
+                f"Node has {libc!r}; OpenMM requires glibc 2.28+. Ask SIMCALC support about this node."
             )
         logger.info("Node runtime: %s; CUDA required", libc)
 

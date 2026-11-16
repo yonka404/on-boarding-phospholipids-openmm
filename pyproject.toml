@@ -2,9 +2,9 @@
 name = "charmm-gui-md"
 version = "0.1.0"
 description = "Python/OpenMM scaffold for CHARMM-GUI membrane and solution MD runs"
-requires-python = ">=3.12.10"
+requires-python = ">=3.12.10,<3.13"
 dependencies = [
-    "openmm==8.5.2",
+    "openmm==8.3.1",
     "mypy==2.3.0",
     "pydantic==2.13.4",
     "ruff==0.16.1",
@@ -12,11 +12,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-amd = [
-    "openmm-hip-7==8.5.0",
-]
+amd = []
 nvidia = [
-    "openmm-cuda-12==8.5.0",
+    "openmm-cuda-12==8.3.1",
 ]
 
 [build-system]

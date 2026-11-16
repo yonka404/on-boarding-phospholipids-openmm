@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import importlib
 import io
 import os
 import tempfile
@@ -26,7 +27,7 @@ class SimcalcValidationTests(unittest.TestCase):
             contextlib.chdir(self.root),
             mock.patch.object(_common, "PROJECT_ROOT", self.root),
             mock.patch.dict(os.environ, self.environment),
-            mock.patch("importlib.metadata.version", return_value="8.5.2"),
+            mock.patch("importlib.metadata.version", return_value="8.3.1"),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
             validate_solution.validate_solution(system_id)
@@ -40,7 +41,7 @@ class SimcalcValidationTests(unittest.TestCase):
         self.assertIn("requested_platform=CUDA", output)
         self.assertIn("GPU-1234-abcd", output)
         self.assertIn("Python=", output)
-        self.assertIn("OpenMM=8.5.2", output)
+        self.assertIn("OpenMM=8.3.1", output)
         self.assertIn(str(self.root / "data/outputs/openmm_native/solution/replica_2"), output)
         self.assertFalse((self.root / "data").exists())
 
@@ -98,6 +99,51 @@ class SimcalcValidationTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "Python 3.12.10.*.venv"),
         ):
             self.run_validation()
+
+    def test_unsupported_python_versions_are_rejected(self) -> None:
+        for version in ((3, 12, 9), (3, 13, 0), (4, 0, 0)):
+            with (
+                self.subTest(version=version),
+                mock.patch.object(validate_solution.sys, "version_info", version),
+                self.assertRaisesRegex(RuntimeError, "Python 3.12.10.*.venv"),
+            ):
+                self.run_validation()
+            self.assertFalse((self.root / "data").exists())
+
+    def test_missing_or_mismatched_packages_prevent_startup(self) -> None:
+        from importlib import metadata
+
+        for package in ("openmm", "openmm-cuda-12"):
+            for result in ("8.5.2", metadata.PackageNotFoundError(package)):
+                def version(name, package=package, result=result):
+                    if name == package:
+                        if isinstance(result, Exception):
+                            raise result
+                        return result
+                    return "8.3.1"
+
+                with (
+                    self.subTest(package=package, result=result),
+                    mock.patch.object(validate_solution.metadata, "version", side_effect=version),
+                    mock.patch.dict(os.environ, self.environment),
+                    mock.patch.object(_common, "PROJECT_ROOT", self.root),
+                    self.assertRaisesRegex(RuntimeError, package + ".*uv sync --locked --extra nvidia"),
+                ):
+                    validate_solution.validate_solution("replica_2")
+                self.assertFalse((self.root / "data").exists())
+
+    def test_binary_import_failure_has_rebuild_instructions(self) -> None:
+        for error in (ImportError("missing symbol"), OSError("GLIBC not found")):
+            with (
+                self.subTest(error=error),
+                mock.patch.dict(os.environ, self.environment),
+                mock.patch.object(_common, "PROJECT_ROOT", self.root),
+                mock.patch.object(validate_solution.metadata, "version", return_value="8.3.1"),
+                mock.patch.object(importlib, "import_module", side_effect=error),
+                self.assertRaisesRegex(RuntimeError, "OpenMM.*uv sync --locked --extra nvidia"),
+            ):
+                validate_solution.validate_solution("replica_2")
+            self.assertFalse((self.root / "data").exists())
 
     def test_main_returns_clear_error_without_traceback(self) -> None:
         with (

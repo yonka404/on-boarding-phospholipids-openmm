@@ -62,6 +62,71 @@ Do not include Solution Builder construction files, logs, OpenMM helper scripts,
 The OpenMM-native adapter validates referenced parameter files and restraint
 files required by active stage protocols; it does not require a `lig/` folder.
 
+## Environment setup and older GPU nodes
+
+The shared stack is Python **3.12.10** (supported: 3.12.10+ in the 3.12
+series), OpenMM **8.3.1**, and, on NVIDIA machines, `openmm-cuda-12==8.3.1`.
+The lockfile retains NumPy 2.4.4 and the CUDA 12.9 runtime dependencies.
+`.python-version` selects the default interpreter for uv.
+
+From the repository root:
+
+```bash
+uv python install 3.12.10
+uv sync --locked                 # AMD/OpenCL or CPU
+uv sync --locked --extra amd     # accepted alias for the base environment
+# On an allocated SIMCALC GPU node, after module load cuda-12.9:
+uv sync --locked --extra nvidia
+```
+
+For AMD, use the ROCm **7.2.4 OpenCL runtime** with the existing kernel driver.
+The `amd` extra is empty; no HIP plugin is installed by default. On Ubuntu 24.04
+with AMD's ROCm 7.2.4 apt repository already configured, install the matching
+runtime and its dependencies:
+
+```bash
+sudo apt-get install rocm-opencl=2.0.0.70204-93~24.04
+```
+
+Check the proposed apt changes before proceeding; preserve the existing ROCm
+installation and driver. The ICD loader must discover AMD's `amdocl64.icd`.
+For a user-local runtime installation, set `OCL_ICD_VENDORS` to a directory
+containing an ICD file with the absolute path to that installation's
+`libamdocl64.so`; its ROCm dependencies must resolve as well.
+
+This stack is for **new simulations only**. Before deploying to a shared
+cluster checkout, wait until all jobs using it have finished, including queued
+jobs. Back up the checkout, lockfile, interpreter, and `.venv` to a restorable
+location before replacing code or rebuilding the environment. Rebuild rather
+than reusing an environment from another OpenMM version. Preserve existing
+results: do not resume OpenMM 8.5.2 binary checkpoints under 8.3.1. Keep the
+old environment available for those runs; checkpoint compatibility across
+OpenMM versions is not guaranteed.
+
+The opt-in GPU smoke test runs five steps of a tiny periodic PME system,
+checks finite energy and the selected backend, and fails if that backend
+cannot initialize. It writes no simulation results:
+
+```bash
+OPENMM_GPU_SMOKE=1 OPENMM_PLATFORM=OpenCL uv run --locked python -m unittest tests.simulation.test_gpu_smoke -v
+```
+
+On SIMCALC, validate each GPU node through a short Slurm allocation (never SSH
+to a compute node). From the login node, for each GPU node reported by `sinfo`:
+
+```bash
+srun -p gpu --gres=gpu:1 --cpus-per-task=1 --mem=2G --time=00:05:00 --nodelist=NODE_NAME --pty bash -l
+# Inside the allocation, from the prepared repository checkout:
+module load cuda-12.9
+OPENMM_GPU_SMOKE=1 OPENMM_PLATFORM=CUDA OPENMM_DEVICE_INDEX=0 .venv/bin/python -m unittest tests.simulation.test_gpu_smoke -v
+exit
+```
+
+Leave Slurm's `CUDA_VISIBLE_DEVICES` unchanged. A glibc 2.28 container import
+check and compatible wheel tags establish only binary-import prerequisites;
+accept GPU compatibility only after the real OpenCL and per-node CUDA tests
+pass. Unavailable allocations leave node validation pending.
+
 ## Running
 
 Start in `mains/`. There are two public launchers:
@@ -238,8 +303,12 @@ running.
 
 The submission launcher and node runner use only Python's standard library and
 support system Python 3.8 or newer. They do not import OpenMM. The node runner
-checks glibc 2.34 or newer before starting the shared `.venv/bin/python`, which
-must meet the simulation project's Python requirement (3.12.10 or newer).
+checks glibc 2.28 or newer before starting the shared `.venv/bin/python`, which
+must use Python 3.12.10+ within the 3.12 series. Allocation validation requires
+OpenMM 8.3.1 and CUDA plugin 8.3.1, and imports OpenMM to catch binary-loading
+errors before the simulation starts. Missing or mismatched packages report
+locked environment rebuild instructions. CUDA context creation stays in the
+simulation workflow.
 Do not use the project environment or `uv run` to launch submission on the older
 login node.
 
@@ -367,8 +436,10 @@ locks remain alongside their system's output directory.
   replacing results. Completed stages use the portable `final_state.xml` to
   initialize the next stage. Portable-state fallback for interrupted stages,
   automatic Slurm resubmission, and extending completed runs are not supported.
-- On Linux AMD hosts with ROCm installed, the package preloads the HIP runtime
-  before OpenMM import so `HIP` can be used when available.
+- Local AMD acceleration uses ROCm 7.2.4 OpenCL by default. HIP runtime
+  preloading occurs only when the optional HIP 7 plugin is already installed.
+  Platform preference remains HIP, CUDA, OpenCL, then CPU; an explicit
+  `OPENMM_PLATFORM` selection fails if unavailable instead of falling back.
 - On NVIDIA hosts, normal OpenMM `CUDA` selection remains unchanged.
 - On CPU-only hosts, the platform fallback order still reaches `CPU`.
 - Use `OPENMM_DEVICE_INDEX` to pin a specific GPU when multiple devices are

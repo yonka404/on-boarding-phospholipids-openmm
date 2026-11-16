@@ -44,9 +44,9 @@ when changing expected input files or formats.
 
 ## Environment
 
-Use Python 3.12.10 or compatible. Prefer `uv` for environment and test commands.
+Use Python 3.12.10 by default; supported versions are >=3.12.10,<3.13. Prefer `uv` for environment and test commands.
 
-Declared project dependencies are OpenMM, Pydantic, Ruff, and mypy. Optional OpenMM platform packages are declared for AMD/HIP and NVIDIA/CUDA. Do not add or recommend dependencies that are not actually intended for this project.
+Declared project dependencies are OpenMM, Pydantic, Ruff, and mypy. OpenMM is pinned to 8.3.1, with NVIDIA/CUDA plugin 8.3.1. The empty `amd` extra preserves installation commands; local AMD acceleration uses ROCm 7.2.4 OpenCL, without a default HIP plugin. Do not add or recommend dependencies that are not actually intended for this project.
 
 Prefer Python standard library tools when they fit the task. Use Python's built-in `logging` module for logging and `unittest` for tests. Do not introduce third-party logging or test libraries such as `loguru` or `pytest` unless the user explicitly asks for them.
 
@@ -85,8 +85,8 @@ For this project, submit through `mains/simcalc.py` so prerequisite checks run
 before `sbatch`. The batch file requests one GPU, four CPU cores, 16 GB RAM, and
 seven days. Keep submission and node-bootstrap imports standard-library-only
 and compatible with system Python 3.8+. Use system `python3` on the login node,
-not `uv run` or the project environment. After allocation and the glibc check,
-the node runner uses `.venv/bin/python` (Python 3.12.10+) for validation and MD.
+not `uv run` or the project environment. After allocation and the glibc 2.28+ check,
+the node runner uses `.venv/bin/python` (Python >=3.12.10,<3.13) for validation and MD.
 
 Preserve automatic output classification, queued fresh/resume mode protection,
 duplicate-job checks, lock ownership, interruption cleanup, and mandatory CUDA
@@ -136,3 +136,12 @@ A change is complete only when:
 - Relevant tests or checks have been run, or any skipped check is clearly explained.
 - Changed runtime behavior is covered by a test or a documented reason.
 - The final response states what changed and what verification was run.
+
+## GPU compatibility rollout
+
+Apply the 8.3.1 stack to new simulations only. Keep restorable backups of the
+old checkout and environment, and wait for queued/running jobs before deploying.
+Never resume 8.5.2 checkpoints under 8.3.1. Verify five-step GPU smoke tests via
+`OPENMM_GPU_SMOKE=1 OPENMM_PLATFORM=OpenCL` locally and `OPENMM_PLATFORM=CUDA`
+on each SIMCALC GPU node through short Slurm allocations. Preserve Slurm GPU
+visibility; unavailable node tests remain pending. See README.md for commands.

@@ -80,8 +80,8 @@ uv sync --locked --extra nvidia
 ```
 
 For AMD, use the ROCm **7.2.4 OpenCL runtime** with the existing kernel driver.
-The `amd` extra is empty; no HIP plugin is installed by default. On Ubuntu 24.04
-with AMD's ROCm 7.2.4 apt repository already configured, install the matching
+The `amd` extra is empty and preserves the base installation commands. On Ubuntu
+24.04 with AMD's ROCm 7.2.4 apt repository already configured, install the matching
 runtime and its dependencies:
 
 ```bash
@@ -436,12 +436,11 @@ locks remain alongside their system's output directory.
   replacing results. Completed stages use the portable `final_state.xml` to
   initialize the next stage. Portable-state fallback for interrupted stages,
   automatic Slurm resubmission, and extending completed runs are not supported.
-- Local AMD acceleration uses ROCm 7.2.4 OpenCL by default. HIP runtime
-  preloading occurs only when the optional HIP 7 plugin is already installed.
-  Platform preference remains HIP, CUDA, OpenCL, then CPU; an explicit
-  `OPENMM_PLATFORM` selection fails if unavailable instead of falling back.
+- Local AMD acceleration uses ROCm 7.2.4 OpenCL. Automatic platform preference
+  is CUDA, OpenCL, CPU, then Reference. `OPENMM_PLATFORM` accepts these four
+  platforms; an explicit selection fails if unavailable or unable to initialize
+  instead of falling back.
 - On NVIDIA hosts, normal OpenMM `CUDA` selection remains unchanged.
 - On CPU-only hosts, the platform fallback order still reaches `CPU`.
 - Use `OPENMM_DEVICE_INDEX` to pin a specific GPU when multiple devices are
   visible.
-- Use `CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP=1` to skip runtime bootstrap.

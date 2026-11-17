@@ -58,8 +58,8 @@ _MEMBRANE_Z_MODE_BY_NAME = {
     "constantvolume": "ConstantVolume",
 }
 
-_GPU_PLATFORM_NAMES = ("HIP", "CUDA", "OpenCL")
-_PLATFORM_PREFERENCE = (*_GPU_PLATFORM_NAMES, "CPU", "Reference")
+_GPU_PLATFORM_NAMES = ("CUDA", "OpenCL")
+_PLATFORM_PREFERENCE = ("CUDA", "OpenCL", "CPU", "Reference")
 _DEVICE_NAME_KEYS = ("Name", "name", "DeviceName", "deviceName")
 
 
@@ -110,6 +110,11 @@ class OpenMMSimulationFactory:
         step_name: str,
     ) -> Simulation:
         platform_override = self._read_env_value("OPENMM_PLATFORM")
+        if platform_override and platform_override not in _PLATFORM_PREFERENCE:
+            raise RuntimeError(
+                f"[{step_name}] Unsupported OPENMM_PLATFORM={platform_override!r}. "
+                f"Choose one of: {', '.join(_PLATFORM_PREFERENCE)}."
+            )
         candidate_names = (
             [platform_override] if platform_override else list(_PLATFORM_PREFERENCE)
         )

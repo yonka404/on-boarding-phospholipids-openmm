@@ -20,7 +20,7 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
         created_simulation = object()
 
         def platform_lookup(name: str):
-            if name in {"HIP", "CUDA", "OpenCL"}:
+            if name in {"CUDA", "OpenCL"}:
                 raise RuntimeError(f"{name} unavailable")
             if name == "CPU":
                 return cpu_platform
@@ -47,33 +47,38 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
         self.assertIs(simulation, created_simulation)
         self.assertEqual(
             [call.args[0] for call in get_platform.call_args_list],
-            ["HIP", "CUDA", "OpenCL", "CPU"],
+            ["CUDA", "OpenCL", "CPU"],
         )
         self.assertIs(simulation_ctor.call_args.args[3], cpu_platform)
 
-    def test_missing_hip_and_cuda_selects_opencl(self) -> None:
+    def test_automatic_selection_prefers_cuda_then_opencl(self) -> None:
         factory = OpenMMSimulationFactory()
-        opencl = object()
 
-        def lookup(name):
-            if name in {"HIP", "CUDA"}:
-                raise RuntimeError("unavailable")
-            if name == "OpenCL":
-                return opencl
-            raise AssertionError("CPU must not be selected when OpenCL works")
-
-        with (
-            mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch(
-                "charmm_gui_md.shared.simulation.factory.Platform.getPlatformByName",
-                side_effect=lookup,
-            ),
-            mock.patch("charmm_gui_md.shared.simulation.factory.Simulation") as ctor,
-            mock.patch.object(factory, "_log_selected_platform"),
+        for cuda_available, expected_platform, expected_attempts in (
+            (True, "CUDA", ["CUDA"]),
+            (False, "OpenCL", ["CUDA", "OpenCL"]),
         ):
-            result = factory._create_simulation(object(), object(), object(), "test")
-        self.assertIs(result, ctor.return_value)
-        self.assertIs(ctor.call_args.args[3], opencl)
+            def lookup(name, cuda_available=cuda_available):
+                if name == "CUDA" and not cuda_available:
+                    raise RuntimeError("CUDA unavailable")
+                return name
+
+            with (
+                self.subTest(cuda_available=cuda_available),
+                mock.patch(
+                    "charmm_gui_md.shared.simulation.factory.Platform.getPlatformByName",
+                    side_effect=lookup,
+                ) as get_platform,
+                mock.patch("charmm_gui_md.shared.simulation.factory.Simulation") as ctor,
+                mock.patch.object(factory, "_log_selected_platform"),
+            ):
+                result = factory._create_simulation(object(), object(), object(), "test")
+                self.assertIs(result, ctor.return_value)
+                self.assertEqual(ctor.call_args.args[3], expected_platform)
+                self.assertEqual(
+                    [call.args[0] for call in get_platform.call_args_list],
+                    expected_attempts,
+                )
 
     def test_explicit_gpu_failure_does_not_fall_back(self) -> None:
         with (
@@ -88,11 +93,30 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
                 object(), object(), object(), "test"
             )
 
+    def test_unsupported_platform_override_reports_supported_choices(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"OPENMM_PLATFORM": "UnsupportedGPU"}),
+            mock.patch(
+                "charmm_gui_md.shared.simulation.factory.Platform.getPlatformByName"
+            ) as lookup,
+            mock.patch("charmm_gui_md.shared.simulation.factory.Simulation") as ctor,
+            self.assertRaisesRegex(RuntimeError, "Unsupported OPENMM_PLATFORM") as error,
+        ):
+            OpenMMSimulationFactory()._create_simulation(
+                object(), object(), object(), "stage"
+            )
+
+        lookup.assert_not_called()
+        ctor.assert_not_called()
+        self.assertIn("UnsupportedGPU", str(error.exception))
+        for name in ("CUDA", "OpenCL", "CPU", "Reference"):
+            self.assertIn(name, str(error.exception))
+
     def test_gpu_context_initialization_failure_tries_next_platform(self) -> None:
         created = object()
 
         def initialize(topology, system, integrator, platform, properties):
-            if platform in {"HIP", "CUDA"}:
+            if platform == "CUDA":
                 raise RuntimeError(f"{platform} context failed")
             return created
 
@@ -117,12 +141,12 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
         self.assertIs(result, created)
         self.assertEqual(
             lookup.call_args_list,
-            [mock.call("HIP"), mock.call("CUDA"), mock.call("OpenCL")],
+            [mock.call("CUDA"), mock.call("OpenCL")],
         )
         self.assertEqual(
-            [call.args[3] for call in ctor.call_args_list], ["HIP", "CUDA", "OpenCL"]
+            [call.args[3] for call in ctor.call_args_list], ["CUDA", "OpenCL"]
         )
-        self.assertEqual(len(logs.output), 2)
+        self.assertEqual(len(logs.output), 1)
 
     def test_reference_is_used_when_all_other_platforms_are_unavailable(self) -> None:
         reference = object()
@@ -147,7 +171,7 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
         self.assertIs(result, ctor.return_value)
         self.assertEqual(
             get_platform.call_args_list,
-            [mock.call(name) for name in ("HIP", "CUDA", "OpenCL", "CPU", "Reference")],
+            [mock.call(name) for name in ("CUDA", "OpenCL", "CPU", "Reference")],
         )
         self.assertIs(ctor.call_args.args[3], reference)
         self.assertEqual(ctor.call_args.args[4], {})
@@ -192,14 +216,13 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
                 object(), object(), object(), "stage"
             )
 
-        for name in ("HIP", "CUDA", "OpenCL", "CPU", "Reference"):
+        for name in ("CUDA", "OpenCL", "CPU", "Reference"):
             self.assertIn(
                 f"{name} initialization failed: context failed", str(error.exception)
             )
 
     def test_platform_selection_forwards_only_applicable_gpu_properties(self) -> None:
         for name, properties in (
-            ("HIP", {"Precision": "mixed", "DeviceIndex": "1,2"}),
             ("CUDA", {"Precision": "mixed", "DeviceIndex": "1,2"}),
             (
                 "OpenCL",

@@ -46,7 +46,7 @@ when changing expected input files or formats.
 
 Use Python 3.12.10 by default; supported versions are >=3.12.10,<3.13. Prefer `uv` for environment and test commands.
 
-Declared project dependencies are OpenMM, Pydantic, Ruff, and mypy. OpenMM is pinned to 8.3.1, with NVIDIA/CUDA plugin 8.3.1. The empty `amd` extra preserves installation commands; local AMD acceleration uses ROCm 7.2.4 OpenCL, without a default HIP plugin. Do not add or recommend dependencies that are not actually intended for this project.
+Declared project dependencies are OpenMM, Pydantic, Ruff, and mypy. OpenMM is pinned to 8.3.1, with NVIDIA/CUDA plugin 8.3.1. The empty `amd` extra preserves installation commands; local AMD acceleration uses ROCm 7.2.4 OpenCL. Do not add or recommend dependencies that are not actually intended for this project.
 
 Prefer Python standard library tools when they fit the task. Use Python's built-in `logging` module for logging and `unittest` for tests. Do not introduce third-party logging or test libraries such as `loguru` or `pytest` unless the user explicitly asks for them.
 

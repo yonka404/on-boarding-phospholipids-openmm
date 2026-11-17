@@ -3,7 +3,7 @@
 Tests are grouped by the production area they exercise, mirroring
 `src/charmm_gui_md/` where possible:
 
-- `runtime/`: package import and runtime bootstrap behavior.
+- `runtime/`: package import behavior.
 - `inputs/`: OpenMM-native input adapter validation.
 - `protocols/`: stage protocol parsing, schedule behavior, and related protocol
   models.
@@ -40,10 +40,9 @@ are created in `TemporaryDirectory` and cleaned automatically. Tests checking
 input validation mock molecular-file readers; integration checks construct tiny
 OpenMM systems on the Reference platform.
 
-Tests must scope environment changes with `mock.patch.dict` and mutable
-bootstrap state with `mock.patch.object`, restoring both after each test.
-Do not set bootstrap flags during test-module import. Platform fallback tests
-discard inherited `OPENMM_*` overrides within their own scope; the opt-in GPU
+Tests must scope environment changes with `mock.patch.dict`, restoring them
+after each test. Platform fallback tests discard inherited `OPENMM_*`
+overrides within their own scope; the opt-in GPU
 test keeps its requested backend. Fake-launcher environments remove exported
 Bash functions, startup hooks, and inherited Bash options so a login shell's
 `module` function cannot replace the test executable. Real Slurm allocations

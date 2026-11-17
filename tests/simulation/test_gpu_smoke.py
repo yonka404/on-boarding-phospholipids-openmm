@@ -14,7 +14,7 @@ from charmm_gui_md.shared.simulation import OpenMMSimulationFactory
 class GPUSmokeTests(unittest.TestCase):
     def test_requested_gpu_runs_periodic_pme(self) -> None:
         requested = os.environ.get("OPENMM_PLATFORM")
-        self.assertIn(requested, ("OpenCL", "CUDA", "HIP"), "Set OPENMM_PLATFORM to a GPU backend")
+        self.assertIn(requested, ("OpenCL", "CUDA"), "Set OPENMM_PLATFORM to a GPU backend")
         topology = Topology()
         residue = topology.addResidue("ION", topology.addChain())
         system = System()

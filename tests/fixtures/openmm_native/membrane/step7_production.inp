@@ -1,0 +1,15 @@
+# Unrestrained membrane protocol example.
+nstep = 20
+dt = 0.002
+nstout = 2
+nstdcd = 4
+temp = 303.15
+fric_coeff = 1.0
+r_on = 1.0
+r_off = 1.2
+ewald_tol = 0.0005
+pcouple = yes
+p_ref = 1.0
+p_type = membrane
+p_freq = 25
+rest = no

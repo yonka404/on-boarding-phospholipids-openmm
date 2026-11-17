@@ -16,6 +16,15 @@ from unittest import mock
 PROJECT = Path(__file__).resolve().parents[2]
 
 
+def _fake_shell_environment(environment: dict[str, str]) -> dict[str, str]:
+    """Keep the fake tools in control even inside a module-enabled login shell."""
+    startup_keys = {"BASH_ENV", "ENV", "BASHOPTS", "SHELLOPTS", "PROMPT_COMMAND"}
+    return {
+        key: value for key, value in environment.items()
+        if not key.startswith("BASH_FUNC_") and key not in startup_keys
+    }
+
+
 class SimcalcLauncherTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -140,14 +149,14 @@ elif name == "python":
         python = self.root / ".venv/bin/python"
         python.parent.mkdir(parents=True)
         python.symlink_to(tool)
-        self.env = dict(
+        self.env = _fake_shell_environment(dict(
             os.environ,
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
             FAKE_CALLS=str(self.calls),
             SLURM_SUBMIT_DIR=str(self.root),
             SLURM_JOB_ID="203",
             CUDA_VISIBLE_DEVICES="2",
-        )
+        ))
 
     def run_script(self, script="simcalc.py", args=None, mode=""):
         return subprocess.run(
@@ -200,6 +209,29 @@ elif name == "python":
         self.assertIn("GPU invocation CUDA 0 mask=2", result.stdout)
         self.assertEqual(before, {path.name: path.read_bytes() for path in stage.iterdir()})
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
+
+    def test_inherited_shell_functions_and_startup_hooks_cannot_override_fake_module(self):
+        hook = Path(self.temp.name) / "startup.sh"
+        hook.write_text("exit 92\n")
+        contaminated = dict(
+            self.env,
+            BASH_ENV=str(hook),
+            ENV=str(hook),
+            SHELLOPTS="noexec",
+            BASHOPTS="extdebug",
+            PROMPT_COMMAND="exit 93",
+        )
+        contaminated["BASH_FUNC_module%%"] = "() { return 91; }"
+        contaminated["BASH_FUNC_getconf%%"] = "() { return 94; }"
+        self.env = _fake_shell_environment(contaminated)
+
+        result = self.run_script(script="run_solution.slurm")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.invocations("module"), [["load", "cuda-12.9"]])
+        self.assertIn("GPU invocation CUDA 0 mask=2", result.stdout)
+        self.assertEqual(contaminated["BASH_ENV"], str(hook))
+        self.assertIn("BASH_FUNC_module%%", contaminated)
 
     def test_continuation_between_stages_is_submitted_as_resume(self):
         self.completed_stage()
@@ -524,7 +556,7 @@ elif name == "python":
         original_directory = Path.cwd()
         self.addCleanup(os.chdir, original_directory)
         with (
-            mock.patch.dict(os.environ, self.env),
+            mock.patch.dict(os.environ, self.env, clear=True),
             mock.patch.object(Path, "mkdir", mkdir),
             self.assertRaisesRegex(common.LauncherError, "Output already exists"),
         ):
@@ -592,7 +624,7 @@ elif name == "python":
         original_directory = Path.cwd()
         self.addCleanup(os.chdir, original_directory)
         with (
-            mock.patch.dict(os.environ, self.env),
+            mock.patch.dict(os.environ, self.env, clear=True),
             mock.patch.object(Path, 'mkdir', acquire),
             self.assertRaisesRegex(common.LauncherError, 'missing'),
         ):

@@ -54,6 +54,14 @@ class PipelineTests(unittest.TestCase):
 
         runner_type.assert_called_once_with(profile=SOLUTION_PROFILE)
 
+    def test_membrane_protocol_sweep_binds_membrane_profile(self) -> None:
+        with mock.patch("charmm_gui_md.membrane.pipeline.SweepRunner") as runner_type:
+            membrane_pipeline.run_protocol_sweep(
+                inputs_dir=Path("inputs"), outputs_dir=Path("outputs")
+            )
+
+        runner_type.assert_called_once_with(profile=MEMBRANE_PROFILE)
+
 
 if __name__ == "__main__":
     unittest.main()

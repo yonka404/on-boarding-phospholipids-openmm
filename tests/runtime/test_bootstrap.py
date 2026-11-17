@@ -1,7 +1,4 @@
 import os
-
-os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
-
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +9,14 @@ from charmm_gui_md.shared import runtime
 
 class RuntimeBootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
-        runtime._BOOTSTRAP_ATTEMPTED = False
+        self.enterContext(mock.patch.object(runtime, "_BOOTSTRAP_ATTEMPTED", False))
+        self.enterContext(mock.patch.dict(os.environ, {}, clear=True))
+
+    def test_bootstrap_only_attempts_setup_once(self) -> None:
+        with mock.patch.object(runtime.platform, "system", return_value="Darwin") as system:
+            runtime.bootstrap_openmm_runtime()
+            runtime.bootstrap_openmm_runtime()
+        system.assert_called_once_with()
 
     def test_bootstrap_honors_generic_skip_environment_variable(self) -> None:
         with (

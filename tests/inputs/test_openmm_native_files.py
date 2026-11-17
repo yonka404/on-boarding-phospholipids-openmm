@@ -1,7 +1,3 @@
-import os
-
-os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
-
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,15 +10,19 @@ from charmm_gui_md.solution.profile import SOLUTION_PROFILE
 
 
 class OpenMMNativeFilesValidationTests(unittest.TestCase):
+    def test_missing_input_directory_is_not_created(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "missing"
+            with self.assertRaisesRegex(ValueError, "not a directory"):
+                OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+            self.assertFalse(root.exists())
+
     def test_membrane_profile_accepts_only_referenced_parameter_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = _write_openmm_native_fixture(
                 Path(tmpdir),
                 profile=MEMBRANE_PROFILE,
-                toppar_stream=(
-                    "../toppar/top_all36_prot.rtf\n"
-                    "../lig/lig.rtf\n"
-                ),
+                toppar_stream=("../toppar/top_all36_prot.rtf\n../lig/lig.rtf\n"),
                 referenced_files=(
                     "toppar/top_all36_prot.rtf",
                     "lig/lig.rtf",
@@ -187,6 +187,98 @@ class OpenMMNativeFilesValidationTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, r"Invalid JSON"):
                 OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+    def test_both_profiles_require_every_initial_and_protocol_file(self) -> None:
+        for profile in (MEMBRANE_PROFILE, SOLUTION_PROFILE):
+            names = (
+                *(
+                    f"{profile.initial_input_prefix}.{suffix}"
+                    for suffix in ("psf", "pdb", "crd")
+                ),
+                "sysinfo.dat",
+                "toppar.str",
+                *(f"{name}.inp" for name in profile.protocol_schedule.stage_names),
+            )
+            for name in names:
+                with (
+                    self.subTest(profile=profile, name=name),
+                    tempfile.TemporaryDirectory() as tmpdir,
+                ):
+                    root = _write_openmm_native_fixture(
+                        Path(tmpdir),
+                        profile=profile,
+                        missing_openmm_files=(name,),
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError, "Missing required OpenMM-native files"
+                    ) as error:
+                        OpenMMNativeFiles.from_root(root, profile=profile)
+                    self.assertIn(name, str(error.exception))
+
+    def test_validation_rejects_malformed_stage_protocols_for_both_profiles(
+        self,
+    ) -> None:
+        for profile in (MEMBRANE_PROFILE, SOLUTION_PROFILE):
+            stage = profile.protocol_schedule.stage_names[0]
+            for contents in ("nstep = invalid\n", "rest = maybe\n"):
+                with (
+                    self.subTest(profile=profile, contents=contents),
+                    tempfile.TemporaryDirectory() as tmpdir,
+                ):
+                    root = _write_openmm_native_fixture(
+                        Path(tmpdir),
+                        profile=profile,
+                        protocol_overrides={stage: contents},
+                    )
+                    with self.assertRaises(ValueError):
+                        OpenMMNativeFiles.from_root(root, profile=profile)
+
+    def test_sysinfo_rejects_missing_short_and_nonnumeric_dimensions(self) -> None:
+        for contents in (
+            "{}",
+            '{"dimensions": [1, 2]}',
+            '{"dimensions": "box"}',
+            '{"dimensions": [1, null, 3]}',
+        ):
+            with (
+                self.subTest(contents=contents),
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                root = _write_openmm_native_fixture(
+                    Path(tmpdir), profile=SOLUTION_PROFILE
+                )
+                (root / "openmm/sysinfo.dat").write_text(contents)
+                with self.assertRaisesRegex(ValueError, "dimensions"):
+                    OpenMMNativeFiles.from_root(root, profile=SOLUTION_PROFILE)
+
+    def test_native_file_readers_receive_profile_paths_without_parsing_placeholder_files(
+        self,
+    ) -> None:
+        for profile in (MEMBRANE_PROFILE, SOLUTION_PROFILE):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmpdir:
+                root = _write_openmm_native_fixture(Path(tmpdir), profile=profile)
+                files = OpenMMNativeFiles.from_root(root, profile=profile)
+                for suffix, property_name, reader_name in (
+                    ("psf", "psf_file", "CharmmPsfFile"),
+                    ("pdb", "pdb_file", "PDBFile"),
+                    ("crd", "crd_file", "CharmmCrdFile"),
+                ):
+                    with (
+                        self.subTest(reader=reader_name),
+                        mock.patch(
+                            f"charmm_gui_md.shared.inputs.openmm_native_files.{reader_name}",
+                        ) as reader,
+                    ):
+                        self.assertIs(
+                            getattr(files, property_name), reader.return_value
+                        )
+                        reader.assert_called_once_with(
+                            str(
+                                root
+                                / "openmm"
+                                / f"{profile.initial_input_prefix}.{suffix}"
+                            )
+                        )
 
 
 def _write_openmm_native_fixture(

@@ -1,7 +1,4 @@
-import os
 import unittest
-
-os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 
 class PackageApiTests(unittest.TestCase):

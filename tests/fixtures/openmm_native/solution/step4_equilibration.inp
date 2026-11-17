@@ -1,0 +1,18 @@
+# Restrained solution equilibration without pressure coupling.
+mini_nstep = 50
+mini_tol = 100.0
+gen_vel = yes
+gen_temp = 303.15
+nstep = 10
+dt = 0.001
+nstout = 2
+nstdcd = 4
+temp = 303.15
+fric_coeff = 1.0
+r_on = 1.0
+r_off = 1.2
+ewald_tol = 0.0005
+pcouple = no
+rest = yes
+fc_bb = 400.0
+fc_sc = 40.0

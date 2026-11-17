@@ -1,11 +1,8 @@
-import os
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
-
-os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 from openmm import CustomExternalForce, Platform, System, Vec3, VerletIntegrator
 from openmm.app import Element, PDBFile, Simulation, Topology

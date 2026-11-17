@@ -1,18 +1,24 @@
-import os
-
-os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
-
 import tempfile
 import unittest
 from pathlib import Path
 
 from charmm_gui_md.shared.protocols import OpenMMStageProtocol
 
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "openmm_native"
+MEMBRANE_OPENMM_DIR = FIXTURES / "membrane"
+SOLUTION_OPENMM_DIR = FIXTURES / "solution"
 
-MEMBRANE_OPENMM_DIR = Path(
-    "data/inputs/openmm_native/membrane/ligand_membrane/openmm"
-)
-SOLUTION_OPENMM_DIR = Path("data/inputs/openmm_native/solution/abeta_40/openmm")
+_REQUIRED_VALUES = {
+    "nstep": "10",
+    "dt": "0.001",
+    "nstout": "2",
+    "nstdcd": "4",
+    "temp": "303.15",
+    "fric_coeff": "1.0",
+    "r_on": "1.0",
+    "r_off": "1.2",
+    "ewald_tol": "0.0005",
+}
 
 
 class OpenMMStageProtocolTests(unittest.TestCase):
@@ -70,7 +76,7 @@ class OpenMMStageProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.lipid_dihedral_restraint_kj_mol_rad2, 0.0)
         self.assertEqual(protocol.carbohydrate_dihedral_restraint_kj_mol_rad2, 0.0)
 
-    def test_from_file_models_all_current_openmm_native_assignment_keys(self) -> None:
+    def test_from_file_models_all_dedicated_fixture_assignment_keys(self) -> None:
         field_by_key = {
             "mini_nstep": ("minimization_steps", int),
             "mini_tol": ("minimization_tolerance_kj_mol_nm", float),
@@ -104,9 +110,13 @@ class OpenMMStageProtocolTests(unittest.TestCase):
         }
 
         protocol_paths = (
-            *sorted(MEMBRANE_OPENMM_DIR.glob("step*.inp")),
-            *sorted(SOLUTION_OPENMM_DIR.glob("step*.inp")),
+            MEMBRANE_OPENMM_DIR / "step6.1_equilibration.inp",
+            MEMBRANE_OPENMM_DIR / "step6.6_equilibration.inp",
+            MEMBRANE_OPENMM_DIR / "step7_production.inp",
+            SOLUTION_OPENMM_DIR / "step4_equilibration.inp",
+            SOLUTION_OPENMM_DIR / "step5_production.inp",
         )
+        seen_keys: set[str] = set()
         for protocol_path in protocol_paths:
             with self.subTest(protocol_path=protocol_path):
                 assignments = _assignment_values(protocol_path)
@@ -115,15 +125,17 @@ class OpenMMStageProtocolTests(unittest.TestCase):
                     protocol_path=protocol_path,
                 )
 
-                for key, (field_name, converter) in field_by_key.items():
-                    if key not in assignments:
-                        continue
-
+                self.assertTrue(assignments, f"Empty protocol fixture: {protocol_path}")
+                self.assertLessEqual(assignments.keys(), field_by_key.keys())
+                seen_keys.update(assignments)
+                for key, value in assignments.items():
+                    field_name, converter = field_by_key[key]
                     self.assertEqual(
                         getattr(protocol, field_name),
-                        converter(assignments[key]),
+                        converter(value),
                         f"{protocol_path.name} {key}",
                     )
+        self.assertEqual(seen_keys, field_by_key.keys())
 
     def test_from_file_reads_solution_equilibration_restraints(self) -> None:
         protocol = OpenMMStageProtocol.from_file(
@@ -146,6 +158,129 @@ class OpenMMStageProtocolTests(unittest.TestCase):
         self.assertTrue(protocol.pressure_coupling)
         self.assertEqual(protocol.barostat_kind, "isotropic")
         self.assertEqual(protocol.pressure_bar, 1.0)
+
+    def test_missing_protocol_fails_visibly(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self.assertRaisesRegex(FileNotFoundError, "Stage protocol not found"),
+        ):
+            OpenMMStageProtocol.from_file("stage", Path(tmpdir) / "missing.inp")
+
+    def test_each_required_field_must_be_present(self) -> None:
+        for key in _REQUIRED_VALUES:
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, f"field: {key}$"),
+            ):
+                self._read_values(
+                    {k: v for k, v in _REQUIRED_VALUES.items() if k != key}
+                )
+
+    def test_malformed_numeric_fields_are_rejected(self) -> None:
+        for key in (*_REQUIRED_VALUES, "mini_nstep", "mini_tol", "gen_temp", "fc_bb"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self._read_values({**_REQUIRED_VALUES, key: "invalid"})
+
+    def test_fractional_integer_fields_are_rejected(self) -> None:
+        for key in ("nstep", "nstout", "nstdcd", "mini_nstep"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self._read_values({**_REQUIRED_VALUES, key: "1.5"})
+
+    def test_unsupported_boolean_tokens_are_rejected(self) -> None:
+        for key in ("gen_vel", "pcouple", "rest"):
+            for token in ("", "1", "maybe"):
+                with (
+                    self.subTest(key=key, token=token),
+                    self.assertRaisesRegex(
+                        ValueError, f"Unsupported boolean token for {key}"
+                    ),
+                ):
+                    self._read_values({**_REQUIRED_VALUES, key: token})
+
+    def test_pressure_coupling_requires_pressure_and_interval(self) -> None:
+        values = {**_REQUIRED_VALUES, "pcouple": "yes", "p_ref": "1.0", "p_freq": "25"}
+        for key in ("p_ref", "p_freq"):
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, f"field: {key}$"),
+            ):
+                self._read_values({k: v for k, v in values.items() if k != key})
+
+    def test_malformed_pressure_fields_are_rejected_when_coupling_is_enabled(
+        self,
+    ) -> None:
+        values = {**_REQUIRED_VALUES, "pcouple": "yes", "p_ref": "1.0", "p_freq": "25"}
+        for key in ("p_ref", "p_freq", "p_tens"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self._read_values({**values, key: "invalid"})
+
+    def test_missing_optional_fields_use_defaults(self) -> None:
+        protocol = self._read_values(_REQUIRED_VALUES)
+        expected = {
+            "minimization_steps": None,
+            "minimization_tolerance_kj_mol_nm": None,
+            "generate_velocities": False,
+            "velocity_temperature_kelvin": None,
+            "constraints_name": None,
+            "pressure_coupling": False,
+            "pressure_bar": None,
+            "barostat_kind": None,
+            "membrane_xy_mode_name": None,
+            "membrane_z_mode_name": None,
+            "surface_tension_dyne_per_cm": None,
+            "barostat_interval_steps": None,
+            "coulomb_method_name": "PME",
+            "vdw_method_name": "Force-switch",
+            "restraints_enabled": False,
+            "protein_backbone_restraint_kj_mol_nm2": 0.0,
+            "protein_side_chain_restraint_kj_mol_nm2": 0.0,
+            "lipid_position_restraint_kj_mol_nm2": 0.0,
+            "lipid_dihedral_restraint_kj_mol_rad2": 0.0,
+            "carbohydrate_dihedral_restraint_kj_mol_rad2": 0.0,
+        }
+        for name, value in expected.items():
+            with self.subTest(field=name):
+                self.assertEqual(getattr(protocol, name), value)
+        self.assertFalse(protocol.has_minimization)
+
+    def test_minimization_needs_both_step_count_and_tolerance(self) -> None:
+        for extra, expected in (
+            ({"mini_nstep": "20"}, False),
+            ({"mini_tol": "10.0"}, False),
+            ({"mini_nstep": "20", "mini_tol": "10.0"}, True),
+        ):
+            with self.subTest(extra=extra):
+                self.assertEqual(
+                    self._read_values({**_REQUIRED_VALUES, **extra}).has_minimization,
+                    expected,
+                )
+
+    def test_assignments_accept_case_whitespace_comments_and_boolean_aliases(
+        self,
+    ) -> None:
+        values = {**_REQUIRED_VALUES, " NSTEP ": "12 # steps", "DT": "0.002 ! ps"}
+        for token, expected in (
+            ("YES", True),
+            (" True ", True),
+            ("No", False),
+            (" false ", False),
+        ):
+            with self.subTest(token=token):
+                protocol = self._read_values(
+                    {**values, "gen_vel": token, "rest": token}
+                )
+                self.assertEqual(protocol.dynamics_steps, 12)
+                self.assertEqual(protocol.timestep_ps, 0.002)
+                self.assertEqual(protocol.generate_velocities, expected)
+                self.assertEqual(protocol.restraints_enabled, expected)
+
+    def _read_values(self, values: dict[str, str]) -> OpenMMStageProtocol:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "stage.inp"
+            path.write_text(
+                "\n".join(f"{key} = {value}" for key, value in values.items())
+            )
+            return OpenMMStageProtocol.from_file("stage", path)
 
 
 def _assignment_values(path: Path) -> dict[str, str]:

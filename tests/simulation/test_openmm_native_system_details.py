@@ -1,10 +1,7 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-
-os.environ["CHARMM_GUI_MD_OPENMM_SKIP_BOOTSTRAP"] = "1"
 
 from openmm import (
     CustomBondForce,

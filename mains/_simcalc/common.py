@@ -65,7 +65,10 @@ def check_files(paths: SolutionPaths) -> None:
         "mains/__init__.py",
         "mains/_common.py",
         "mains/_console.py",
+        "mains/_gpu.py",
+        "mains/_gpu_monitor.py",
         "mains/_status.py",
+        "mains/_status_table.py",
         "mains/status.py",
         "mains/local.py",
         "mains/_simcalc/__init__.py",
@@ -108,6 +111,16 @@ class OutputAction:
     mode: str
     stage: str | None = None
     checkpoint_stage: str | None = None
+
+    @property
+    def description(self) -> str:
+        if self.mode == "complete":
+            return "All stages complete"
+        if self.mode == "fresh":
+            return f"Fresh run from {self.stage}"
+        if self.checkpoint_stage is not None:
+            return f"Resume {self.checkpoint_stage} from its checkpoint"
+        return f"Continue at {self.stage} from the previous stage's final state"
 
 
 def check_output(
@@ -185,10 +198,7 @@ def check_available(
 
 
 def log_action(paths: SolutionPaths, action: OutputAction) -> None:
-    if action.mode == "complete":
-        logger.info("System %s is complete; no simulation needed", paths.system_id)
-    else:
-        logger.info("System %s: %s from %s", paths.system_id, action.mode, action.stage)
+    logger.info("SIMCALC · %s · %s", paths.system_id, action.description)
 
 
 def check_writable(paths: SolutionPaths) -> None:

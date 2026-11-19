@@ -2,6 +2,8 @@ import os
 import unittest
 from unittest import mock
 
+from openmm import Platform
+
 from charmm_gui_md.shared.simulation import OpenMMSimulationFactory
 
 
@@ -50,6 +52,23 @@ class SimulationPlatformFallbackTests(unittest.TestCase):
             ["CUDA", "OpenCL", "CPU"],
         )
         self.assertIs(simulation_ctor.call_args.args[3], cpu_platform)
+
+    def test_device_log_reports_the_gpu_selected_by_the_context(self) -> None:
+        platform = mock.Mock(spec=Platform)
+        platform.getName.return_value = "OpenCL"
+        values = {"DeviceName": "Radeon test GPU", "DeviceIndex": "1", "Precision": "mixed"}
+        platform.getPropertyNames.return_value = tuple(values)
+        platform.getPropertyValue.side_effect = lambda context, name: values[name]
+        simulation = mock.Mock()
+        simulation.context.getPlatform.return_value = platform
+
+        with self.assertLogs("charmm_gui_md.shared.simulation.factory", level="INFO") as logs:
+            OpenMMSimulationFactory()._log_selected_platform(simulation, "stage", {})
+
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        for value in ("OpenCL", "Radeon test GPU", "device 1", "mixed precision"):
+            self.assertIn(value, message)
 
     def test_automatic_selection_prefers_cuda_then_opencl(self) -> None:
         factory = OpenMMSimulationFactory()

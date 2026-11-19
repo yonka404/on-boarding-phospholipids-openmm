@@ -44,6 +44,7 @@ class StageRunner:
         step_name: str,
     ) -> Path:
         self.profile.protocol_schedule.require_stage(step_name)
+        logger.info("Stage · %s", step_name, extra={"section": True})
 
         files = OpenMMNativeFiles.from_root(
             inputs_dir=inputs_dir,
@@ -83,10 +84,8 @@ class StageRunner:
 
         if not resumed and protocol.has_minimization:
             logger.info(
-                "[%s] Minimizing with tolerance %.2f kJ/mol/nm for up to %d iterations",
-                protocol.step_name,
-                protocol.minimization_tolerance_kj_mol_nm,
-                protocol.minimization_steps,
+                "Minimization · up to %s iterations at %.2f kJ/mol/nm tolerance",
+                f"{protocol.minimization_steps:,}", protocol.minimization_tolerance_kj_mol_nm,
             )
             simulation.minimizeEnergy(
                 tolerance=protocol.minimization_tolerance_kj_mol_nm
@@ -94,7 +93,6 @@ class StageRunner:
                 / nanometer,
                 maxIterations=protocol.minimization_steps,
             )
-            logger.info("[%s] Minimization complete", protocol.step_name)
 
         if needs_velocity_initialization:
             # CHARMM-GUI draws velocities after constrained coordinates are minimized;
@@ -108,16 +106,11 @@ class StageRunner:
             append=resumed,
         )
 
-        logger.info(
-            "[%s] Running %d remaining MD steps with dt %.4f ps",
-            protocol.step_name,
-            remaining_steps,
-            protocol.timestep_ps,
-        )
         if remaining_steps > 0:
+            logger.info("Dynamics · %s MD steps at %.4f ps/step", f"{remaining_steps:,}", protocol.timestep_ps)
             simulation.step(remaining_steps)
-        logger.info("[%s] Dynamics complete", protocol.step_name)
 
         result = self.output_writer.write(simulation, artifacts, protocol)
         self.checkpoint_manager.clear(artifacts, protocol)
+        logger.info("Stage complete · final state and coordinates in %s", artifacts.output_dir)
         return result

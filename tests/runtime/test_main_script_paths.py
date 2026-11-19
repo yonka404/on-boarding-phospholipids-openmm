@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,10 @@ PROJECT = Path(__file__).resolve().parents[2]
 
 
 class MainScriptPathTests(unittest.TestCase):
+    def setUp(self):
+        # These routing tests use stub workflows, including inside real Slurm allocations.
+        self.enterContext(mock.patch.object(local, "monitor_gpu", return_value=contextlib.nullcontext()))
+
     def test_full_protocol_dispatches_to_selected_environment(self) -> None:
         for environment, pipeline in (("membrane", membrane), ("solution", solution)):
             with (
@@ -21,8 +26,12 @@ class MainScriptPathTests(unittest.TestCase):
                 mock.patch.object(pipeline, "run_protocol_sweep") as run_sweep,
                 mock.patch.object(pipeline, "run_single_step") as run_step,
             ):
-                local.main([environment, "replica_2"])
+                with self.assertLogs("mains.local", level="INFO") as logs:
+                    local.main([environment, "replica_2"])
 
+                self.assertIn(f"{environment}/replica_2", logs.records[0].getMessage())
+                self.assertIn("full protocol", logs.records[0].getMessage())
+                self.assertIn(f"PID {os.getpid()}", logs.records[0].getMessage())
                 run_sweep.assert_called_once_with(
                     inputs_dir=PROJECT / "data/inputs/openmm_native" / environment / "replica_2",
                     outputs_dir=PROJECT / "data/outputs/openmm_native" / environment / "replica_2",
@@ -39,8 +48,10 @@ class MainScriptPathTests(unittest.TestCase):
                 mock.patch.object(pipeline, "run_single_step") as run_step,
                 mock.patch.object(pipeline, "run_protocol_sweep") as run_sweep,
             ):
-                local.main([environment, "replica_2", "--stage", stage])
+                with self.assertLogs("mains.local", level="INFO") as logs:
+                    local.main([environment, "replica_2", "--stage", stage])
 
+                self.assertIn("single stage", logs.records[0].getMessage())
                 run_step.assert_called_once_with(
                     inputs_dir=PROJECT / "data/inputs/openmm_native" / environment / "replica_2",
                     outputs_dir=PROJECT / "data/outputs/openmm_native" / environment / "replica_2",

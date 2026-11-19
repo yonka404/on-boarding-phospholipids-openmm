@@ -1,6 +1,5 @@
 import logging
 import os
-from collections.abc import Mapping
 
 from openmm import (
     LangevinMiddleIntegrator,
@@ -9,15 +8,15 @@ from openmm import (
     Platform,
 )
 from openmm.app import (
+    LJPME,
+    PME,
     AllBonds,
     CutoffNonPeriodic,
     CutoffPeriodic,
     Ewald,
     HAngles,
     HBonds,
-    LJPME,
     NoCutoff,
-    PME,
     Simulation,
 )
 from openmm.unit import angstrom, bar, kelvin, nanometer, picosecond
@@ -60,7 +59,6 @@ _MEMBRANE_Z_MODE_BY_NAME = {
 
 _GPU_PLATFORM_NAMES = ("CUDA", "OpenCL")
 _PLATFORM_PREFERENCE = ("CUDA", "OpenCL", "CPU", "Reference")
-_DEVICE_NAME_KEYS = ("Name", "name", "DeviceName", "deviceName")
 
 
 class OpenMMSimulationFactory:
@@ -201,12 +199,12 @@ class OpenMMSimulationFactory:
         requested_properties: dict[str, str],
     ) -> None:
         platform = simulation.context.getPlatform()
-        platform_name = platform.getName()
 
-        resolved_properties: dict[str, str] = {}
+        properties = requested_properties.copy()
         for property_name in platform.getPropertyNames():
             if property_name not in {
                 "Precision",
+                "DeviceName",
                 "DeviceIndex",
                 "OpenCLPlatformIndex",
                 "UseCpuPme",
@@ -214,83 +212,22 @@ class OpenMMSimulationFactory:
                 continue
 
             try:
-                resolved_properties[property_name] = platform.getPropertyValue(
+                properties[property_name] = platform.getPropertyValue(
                     simulation.context,
                     property_name,
                 )
             except Exception:
-                fallback_value = requested_properties.get(property_name)
-                if fallback_value is not None:
-                    resolved_properties[property_name] = fallback_value
+                logger.debug("Could not read OpenMM property %s", property_name, exc_info=True)
 
-        if platform_name in _GPU_PLATFORM_NAMES:
-            gpu_name = self._get_selected_gpu_name(platform, resolved_properties)
-            if gpu_name is not None:
-                logger.info(
-                    "[%s] Using OpenMM platform %s on GPU %s with properties %s",
-                    step_name,
-                    platform_name,
-                    gpu_name,
-                    resolved_properties or requested_properties,
-                )
-                return
-
-        logger.info(
-            "[%s] Using OpenMM platform %s with properties %s",
-            step_name,
-            platform_name,
-            resolved_properties or requested_properties,
-        )
-
-    def _get_selected_gpu_name(
-        self,
-        platform: Platform,
-        resolved_properties: dict[str, str],
-    ) -> str | None:
-        try:
-            devices = list(platform.getDevices(resolved_properties))
-        except Exception:
-            try:
-                devices = list(platform.getDevices())
-            except Exception:
-                return None
-
-        if not devices:
-            return None
-
-        descriptions = [self._describe_device(device) for device in devices]
-        descriptions = [description for description in descriptions if description]
-        if not descriptions:
-            return None
-
-        return " + ".join(descriptions)
-
-    def _describe_device(self, device) -> str:
-        if isinstance(device, Mapping):
-            name = next(
-                (
-                    str(device[key])
-                    for key in _DEVICE_NAME_KEYS
-                    if key in device and str(device[key]).strip()
-                ),
-                None,
-            )
-            index = next(
-                (
-                    str(device[key])
-                    for key in ("DeviceIndex", "deviceIndex", "Index", "index")
-                    if key in device and str(device[key]).strip()
-                ),
-                None,
-            )
-
-            if name and index:
-                return f"{name} (device {index})"
-            if name:
-                return name
-            return ", ".join(f"{key}={value}" for key, value in sorted(device.items()))
-
-        return str(device)
+        details = [platform.getName()]
+        for key, label in (
+            ("DeviceName", "{}"), ("DeviceIndex", "device {}"),
+            ("OpenCLPlatformIndex", "OpenCL platform {}"), ("Precision", "{} precision"),
+        ):
+            if properties.get(key):
+                details.append(label.format(properties[key]))
+        logger.info("OpenMM device · %s", " · ".join(details))
+        logger.debug("[%s] OpenMM platform properties: %s", step_name, properties)
 
     @staticmethod
     def _read_env_value(name: str) -> str | None:

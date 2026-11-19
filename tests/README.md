@@ -92,8 +92,11 @@ submit jobs, use production inputs, or run production simulations.
 Status coverage in `workflows/test_status.py` uses temporary reports, fake
 scheduler/process information, and a sleeping Python launcher fixture (no MD).
 It exercises stage progress, recovery rollback, bounded reads, discovery,
-table/stacked formatting, and a system-Python snapshot that must create no
-files or caches. `runtime/test_console.py` covers colour selection and plain
+wide and compact tables, and a system-Python snapshot that must create no
+files or caches. GPU tests in `runtime/test_gpu_usage.py` and
+`workflows/test_gpu_monitor.py` cover per-PID driver accounting, local and
+allocated-job sampling, stale or ambiguous readings, and multi-GPU warnings.
+`runtime/test_console.py` covers colour selection and plain
 runtime logs; launcher tests cover concise submission and captured failure
 diagnostics. Local input bundles are not needed by these tests.
 

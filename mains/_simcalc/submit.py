@@ -158,8 +158,7 @@ def submit(system_id: str) -> None:
     paths = SolutionPaths(PROJECT_ROOT, system_id)
     os.chdir(paths.project_root)
     console = Console()
-    console.heading("SIMCALC · Solution simulation")
-    console.line()
+    console.heading("SIMCALC · Solution submission")
     console.field("System", system_id)
 
     # Always check files and destinations before contacting Slurm; no OpenMM import here.
@@ -168,7 +167,7 @@ def submit(system_id: str) -> None:
     if action.mode == "complete":
         console.field("Action", "Complete — no job submitted", tone="green")
         return
-    console.field("Action", f"{'Fresh run' if action.mode == 'fresh' else 'Resume'} from {action.stage}")
+    console.field("Action", action.description)
     check_writable(paths)
 
     for command in ("sbatch", "scontrol", "sinfo", "squeue"):
@@ -177,9 +176,13 @@ def submit(system_id: str) -> None:
                 f"Required command is missing: {command}. Run this on the SIMCALC login node."
             )
     resources = Resources.from_batch_file(paths.batch_file)
-    console.field("Resources", f"1 GPU · {resources.cpus} CPU cores · {resources.memory / 1024:g} GiB RAM · {resources.walltime / 86400:g} days")
+    console.field(
+        "Resources", f"1 GPU · {resources.cpus} CPU cores · "
+        f"{resources.memory / 1024:g} GiB RAM · {resources.walltime / 86400:g} days",
+    )
     console.line()
-    console.field("Checks", "OK — files, output safety, writable paths", tone="green")
+    console.heading("Checks")
+    console.field("Files", "OK · inputs, output safety, writable paths", tone="green")
 
     # One launcher at a time for this replica, including while predicting and submitting.
     with directory_lock(paths.submission_lock, "Submission"):
@@ -188,7 +191,7 @@ def submit(system_id: str) -> None:
             console.field("Action", "Complete — no job submitted", tone="green")
             return
         check_slurm(paths, resources)
-        console.field("", "OK — Slurm, partition limits, compatible nodes", tone="green")
+        console.field("Slurm", "OK · queue, partition limits, compatible nodes", tone="green")
         for directory in (paths.output_root, paths.log_root):
             usage = shutil.disk_usage(directory)
             logger.debug("%s: %.1f GiB free / %.1f GiB total (not an account quota check)", directory, usage.free / 1024**3, usage.total / 1024**3)
@@ -215,8 +218,10 @@ def submit(system_id: str) -> None:
         if estimate.returncode != 0 and advisory.strip():
             logger.warning("Start estimate unavailable (advisory):\n%s", advisory.strip())
         predicted = re.search(r"\bto start at\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\b", advisory) if estimate.returncode == 0 else None
-        console.line()
-        console.field("Start", f"{predicted[1]} (advisory)" if predicted else "Estimate unavailable (advisory); submission can still queue", tone=None if predicted else "yellow")
+        console.field(
+            "Start", f"{predicted[1]} (advisory)" if predicted else "Estimate unavailable (advisory)",
+            tone=None if predicted else "yellow",
+        )
         checked = check_available(paths, action.mode, action.checkpoint_stage)
         if checked.mode == "complete":
             console.field("Action", "Complete — no job submitted", tone="green")
@@ -240,7 +245,6 @@ def submit(system_id: str) -> None:
         console.line()
         console.field("SUBMITTED", f"Job {job_id} accepted by Slurm", tone="green")
         console.field("Log", paths.log_root / f"{system_id}-{job_id}.log")
-        console.line()
         console.field("Status", "python3 mains/status.py")
 
 

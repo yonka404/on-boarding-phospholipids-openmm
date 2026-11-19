@@ -18,11 +18,7 @@ class SimulationInitializer:
         protocol: OpenMMStageProtocol,
     ) -> None:
         if restart_source.state_path is not None:
-            logger.info(
-                "[%s] Loading restart dynamic state from %s",
-                protocol.step_name,
-                restart_source.state_path,
-            )
+            logger.info("Loading restart state · %s", restart_source.state_path)
             self._load_restart_state(simulation, restart_source.state_path)
             return
 
@@ -35,12 +31,7 @@ class SimulationInitializer:
         coordinates_pdb = PDBFile(str(restart_source.coordinates_path))
         simulation.context.setPositions(coordinates_pdb.positions)
 
-        logger.debug(
-            "[%s] Loaded coordinates from %s: %s",
-            protocol.step_name,
-            restart_source.description,
-            restart_source.coordinates_path,
-        )
+        logger.info("Loaded coordinates · %s", restart_source.coordinates_path)
 
     def initialize_velocities(
         self,

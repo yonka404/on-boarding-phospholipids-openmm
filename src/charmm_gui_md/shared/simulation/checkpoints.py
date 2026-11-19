@@ -41,11 +41,9 @@ class StageCheckpointManager:
 
         remaining_steps = protocol.dynamics_steps - completed_steps
         logger.info(
-            "[%s] Loaded checkpoint %s at step %d; %d steps remain",
-            protocol.step_name,
+            "Restored checkpoint at step %s of %s · %s",
+            f"{completed_steps:,}", f"{protocol.dynamics_steps:,}",
             artifacts.checkpoint_path,
-            completed_steps,
-            remaining_steps,
         )
         return remaining_steps
 
@@ -55,8 +53,4 @@ class StageCheckpointManager:
         protocol: OpenMMStageProtocol,
     ) -> None:
         artifacts.checkpoint_path.unlink(missing_ok=True)
-        logger.info(
-            "[%s] Removed completed recovery checkpoint %s",
-            protocol.step_name,
-            artifacts.checkpoint_path,
-        )
+        logger.debug("[%s] Checkpoint cleanup complete", protocol.step_name)

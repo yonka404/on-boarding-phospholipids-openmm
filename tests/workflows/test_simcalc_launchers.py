@@ -33,7 +33,8 @@ class SimcalcLauncherTests(unittest.TestCase):
         self.root.mkdir()
         (self.root / "mains/_simcalc").mkdir(parents=True)
         for name in (
-            "__init__.py", "_common.py", "_console.py", "_status.py", "status.py", "local.py", "simcalc.py",
+            "__init__.py", "_common.py", "_console.py", "_gpu.py", "_gpu_monitor.py",
+            "_status.py", "_status_table.py", "status.py", "local.py", "simcalc.py",
             "_simcalc/__init__.py", "_simcalc/submit.py", "_simcalc/common.py",
             "_simcalc/run_solution.py", "_simcalc/run_solution.slurm",
         ):
@@ -200,12 +201,14 @@ elif name == "python":
         before = {path.name: path.read_bytes() for path in stage.iterdir()}
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Resume step4_equilibration from its checkpoint", result.stdout)
         submission = next(a for a in self.invocations("sbatch") if "--parsable" in a)
         self.assertEqual(submission[-3:], ["--mode", "resume", self.system_id])
         result = self.run_script(
             script="run_solution.slurm", args=["--mode", "resume", self.system_id]
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Resume step4_equilibration from its checkpoint", result.stderr)
         self.assertIn("GPU invocation CUDA 0 mask=2", result.stdout)
         self.assertEqual(before, {path.name: path.read_bytes() for path in stage.iterdir()})
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
@@ -237,7 +240,7 @@ elif name == "python":
         self.completed_stage()
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("step5_production", result.stdout)
+        self.assertIn("Continue at step5_production from the previous stage", result.stdout)
         submission = next(a for a in self.invocations("sbatch") if "--parsable" in a)
         self.assertEqual(submission[-3:], ["--mode", "resume", self.system_id])
 
@@ -381,6 +384,8 @@ elif name == "python":
         self.assertEqual(result.returncode, 0, result.stderr)
         for label in ("System", "Action", "Resources", "Checks", "Start", "SUBMITTED", "Log", "Status"):
             self.assertIn(label, result.stdout)
+        self.assertIn("\n\nChecks\n", result.stdout)
+        self.assertRegex(result.stdout, r"\n\nSUBMITTED\s+Job 321 accepted")
         self.assertIn("1 GPU", result.stdout)
         self.assertIn("4 CPU cores", result.stdout)
         self.assertIn("16 GiB", result.stdout)
@@ -724,6 +729,7 @@ elif name == "python":
     def test_sweep_failure_keeps_exit_status_and_releases_lock(self):
         result = self.run_script(script="run_solution.slurm", mode="sweep_fail")
         self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertIn("[ERROR] Simulation exited with status 17", result.stderr)
         self.assertFalse((self.outputs / f".{self.system_id}.lock").exists())
 
     def test_interruption_stops_sweep_before_releasing_execution_lock(self):

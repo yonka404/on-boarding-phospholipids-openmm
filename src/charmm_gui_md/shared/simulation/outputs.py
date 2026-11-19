@@ -30,15 +30,10 @@ class StageOutputWriter:
                 handle,
             )
 
-        logger.info(
+        logger.debug(
             "[%s] Saved final state and coordinates in %s",
             protocol.step_name,
             artifacts.output_dir,
-        )
-        logger.debug(
-            "[%s] Wrote final coordinates to %s",
-            protocol.step_name,
-            artifacts.final_coordinates_path,
         )
 
         return artifacts.final_coordinates_path

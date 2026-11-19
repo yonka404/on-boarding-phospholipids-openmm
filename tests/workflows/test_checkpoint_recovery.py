@@ -1,6 +1,7 @@
 """Tiny real OpenMM recovery: no production inputs, hardware or simulation runs."""
 
 import csv
+import io
 import struct
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from charmm_gui_md.shared.artifacts import StageArtifacts
 from charmm_gui_md.shared.simulation.reporters import StageReporterInstaller
 from charmm_gui_md.shared.workflows.stage_runner import StageRunner
 from charmm_gui_md.solution.profile import SOLUTION_PROFILE
+from mains._console import ConsoleFormatter
 from tests.simulation.test_recovery import topology
 
 
@@ -94,9 +96,19 @@ class RealCheckpointRecoveryTests(unittest.TestCase):
     def test_resume_repairs_then_appends_without_duplicate_steps_or_frames(self):
         resumed = tiny_simulation()
         try:
-            self.run_recovery(resumed)
+            with self.assertLogs("charmm_gui_md", level="INFO") as logs:
+                self.run_recovery(resumed)
         finally:
             resumed.reporters.clear()
+        formatter = ConsoleFormatter(io.StringIO())
+        output = "\n".join(formatter.format(record) for record in logs.records)
+        self.assertRegex(output, r"^\n\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[INFO\] Stage · step5_production")
+        self.assertIn("Restored checkpoint at step 8 of 20", output)
+        self.assertIn("12 MD steps", output)
+        self.assertIn("recovery-", output)
+        self.assertIn("Stage complete", logs.records[-1].getMessage())
+        self.assertIn(str(self.artifacts.output_dir), logs.records[-1].getMessage())
+        self.assertNotIn("\x1b", output)
         self.assertEqual(resumed.currentStep, 20)
         with self.artifacts.state_data_path.open() as handle:
             records = list(csv.reader(handle))

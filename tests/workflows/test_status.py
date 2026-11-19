@@ -58,6 +58,7 @@ class StatusFixture(unittest.TestCase):
         )
 
     def job(self, state="RUNNING", **options):
+        options.setdefault("started_at", NOW - 3600)
         return _status.Execution(
             kind="solution", system_id="replica_2", identifier="321",
             source="slurm", state=state, **options,
@@ -93,6 +94,25 @@ class StatusTests(StatusFixture):
         system = self.snapshot(self.job("PENDING")).systems[0]
         self.assertEqual(system.current_stage.percent, 50)
         self.assertIsNone(system.eta_seconds)
+        self.assertEqual((system.gpu.count, system.gpu.memory_bytes), (0, 0))
+
+    def test_running_job_without_a_start_time_cannot_claim_a_previous_speed(self):
+        stage = self.stage("step4_equilibration")
+        self.csv(stage, record(1000, "10"))
+        system = self.snapshot(self.job(started_at=None)).systems[0]
+        self.assertEqual(system.current_stage.steps, 1000)
+        self.assertIsNone(system.eta_seconds)
+        self.assertIsNone(system.speed)
+
+    def test_a_speed_and_gpu_usage_cannot_be_attributed_to_shared_outputs(self):
+        stage = self.stage("step4_equilibration")
+        self.csv(stage, record(1000, "10"))
+        local = _status.Execution("solution", "replica_2", "PID 41", "local", "RUNNING")
+        system = self.snapshot(self.job(), local).systems[0]
+        self.assertIsNone(system.speed)
+        self.assertIsNone(system.eta_seconds)
+        self.assertIsNone(system.gpu.count)
+        self.assertIsNone(system.gpu.memory_bytes)
 
     def test_complete_requires_all_stages_final_files_and_no_checkpoint(self):
         self.stage("step4_equilibration", complete=True)
@@ -143,6 +163,16 @@ class StatusTests(StatusFixture):
         snapshot = self.snapshot()
         self.assertEqual([s.system_id for s in snapshot.systems], ["abeta-42-replica-2"])
         self.assertEqual(snapshot.systems[0].state, "UNKNOWN")
+
+    def test_local_run_does_not_link_to_an_earlier_slurm_jobs_log(self):
+        logs = self.root / "mains/logs"
+        logs.mkdir(parents=True)
+        old = logs / "replica_2-123.log"
+        old.touch()
+        local = _status.Execution("solution", "replica_2", "PID 41", "local", "RUNNING")
+        self.assertIsNone(self.snapshot(local).systems[0].log_path)
+        self.assertEqual(self.snapshot().systems[0].log_path, old)
+        self.assertEqual(self.snapshot(self.job()).systems[0].log_path, logs / "replica_2-321.log")
 
     def test_single_stage_completion_is_not_whole_protocol_completion(self):
         self.stage("step4_equilibration", complete=True)
@@ -271,18 +301,25 @@ class StatusTests(StatusFixture):
         (stage / "checkpoint.chk").write_bytes(b"checkpoint")
         backup = stage / "recovery-example"
         backup.mkdir()
-        (backup / "state_data.csv").write_text(HEADER + record(12_000, "8"))
+        retained = "".join(record(step, "8") for step in range(1000, 2_001_000, 1000))
+        discarded = "".join(record(step, "8") for step in (2_001_000, 2_002_000, 2_003_000))
+        (backup / "state_data.csv").write_text(HEADER + retained + discarded)
         os.utime(backup, (NOW - 7, NOW - 7))
-        path = self.csv(stage, record(10_000, "8"))
+        path = self.csv(stage, retained)
         os.utime(path, (NOW - 5, NOW - 5))
         execution = self.job(started_at=NOW - 10)
         system = self.snapshot(execution).systems[0]
-        self.assertEqual(system.current_stage.steps, 10_000)
+        self.assertEqual(system.current_stage.steps, 2_000_000)
         self.assertIsNone(system.current_stage.speed)
         self.assertIsNone(system.eta_seconds)
         self.assertIn("retained", _status.render_snapshot(self.snapshot(execution)).lower())
         with path.open("a") as stream:
-            stream.write(record(13_000, "12"))
+            stream.write(record(2_001_000, "0"))
+        os.utime(path, (NOW - 2, NOW - 2))
+        self.assertIsNone(self.snapshot(execution).systems[0].eta_seconds)
+
+        with path.open("a") as stream:
+            stream.write(record(2_002_000, "12"))
         os.utime(path, (NOW - 1, NOW - 1))
         system = self.snapshot(execution).systems[0]
         self.assertEqual(system.current_stage.speed, 12)
@@ -312,7 +349,7 @@ class CsvStatusTests(unittest.TestCase):
         self.assertEqual(report.speed, 10)
 
     def test_last_finite_positive_speed_is_used(self):
-        for speed in ("0", "nan", "inf", "-2"):
+        for speed in ("nan", "inf", "-2"):
             with self.subTest(speed=speed):
                 self.path.write_text(HEADER + record(1000, "8") + record(2000, speed))
                 report = _status.read_report(self.path)
@@ -326,10 +363,12 @@ class CsvStatusTests(unittest.TestCase):
         self.assertIsNone(report.speed)
 
     def test_unknown_startup_speed_preserves_steps_without_borrowing_old_run_speed(self):
-        self.path.write_text(HEADER + record(1000, "8") + record(2000, "--"))
-        report = _status.read_report(self.path)
-        self.assertEqual(report.step, 2000)
-        self.assertIsNone(report.speed)
+        for first_speed in ("--", "0"):
+            with self.subTest(first_speed=first_speed):
+                self.path.write_text(HEADER + record(1000, "8") + record(2000, first_speed))
+                report = _status.read_report(self.path)
+                self.assertEqual(report.step, 2000)
+                self.assertIsNone(report.speed)
 
     def test_missing_or_malformed_header_reports_problem(self):
         for contents in ("", "bad header\n" + record(1000), HEADER):
@@ -440,6 +479,47 @@ class StatusDiscoveryTests(StatusFixture):
                     ("solution", "replica_2", "step4_equilibration"),
                 )
 
+    def test_pycharm_debug_run_uses_the_simulation_pid(self):
+        stage = self.stage("step4_equilibration")
+        self.csv(stage, record(50_000, "10"))
+        proc = self.root / "proc"
+        proc.mkdir()
+        (proc / "uptime").write_text("1000 0\n")
+        debugpy = self.root / "IDE helpers/debugpy"
+        script = self.root / "mains/local.py"
+        processes = (
+            (41, 1, [debugpy / "launcher", "5678", "--", script, "solution", "replica_2"]),
+            (42, 41, [
+                "-X", "frozen_modules=off", debugpy / "launcher/../../debugpy",
+                "--connect", "127.0.0.1:5679", "--configure-qt", "none",
+                "--adapter-access-token", "example", script, "solution", "replica_2",
+            ]),
+            (43, 1, [
+                debugpy, "--listen", "5680", "other.py", script, "solution", "replica_2",
+            ]),
+        )
+        for pid, parent, args in processes:
+            directory = proc / str(pid)
+            directory.mkdir()
+            (directory / "exe").symlink_to(Path(sys.executable).resolve())
+            (directory / "cwd").symlink_to(self.root, target_is_directory=True)
+            (directory / "cmdline").write_bytes(b"\0".join(map(os.fsencode, ["python", *args])) + b"\0")
+            fields = ["S", str(parent)] + ["0"] * 17 + ["100"] + ["0"] * 5
+            (directory / "stat").write_text(f"{pid} (python) " + " ".join(fields))
+
+        with (
+            mock.patch("mains._status.shutil.which", return_value=None),
+            mock.patch("mains._status.measure_gpu", return_value=_status.GpuUsage(1, 512 * 1024**2)) as measure,
+        ):
+            activity = _status.read_activity(self.root, proc_root=proc, now=NOW)
+        system = _status.collect_snapshot(self.root, now=NOW, activity=activity).systems[0]
+        self.assertEqual(system.state, "RUNNING")
+        self.assertEqual([job.identifier for job in system.executions], ["PID 42"])
+        self.assertEqual((system.gpu.count, system.gpu.memory_bytes), (1, 512 * 1024**2))
+        self.assertEqual(system.speed, 10)
+        self.assertIsNotNone(system.eta_seconds)
+        measure.assert_called_once_with(42)
+
     def test_allocated_node_child_is_not_counted_as_a_second_local_run(self):
         proc = self.root / "proc"
         proc.mkdir()
@@ -497,7 +577,7 @@ class StatusDiscoveryTests(StatusFixture):
 
     def test_slurm_query_filters_user_prefix_and_project_with_one_call(self):
         result = subprocess.CompletedProcess([], 0, "\n".join([
-            f"321|solution-md-replica_2|RUNNING|{self.root}|nvdfen1|1-02:00:00|5-22:00:00|2023-11-14T20:00:00|None",
+            f"321|solution-md-replica_2|RUNNING|{self.root}|nvdfen1|1-02:00:00|5-22:00:00|2023-11-14T20:00:00|nvdfen1",
             f"322|unrelated|RUNNING|{self.root}|node|00:01|01:00|N/A|None",
             "323|solution-md-other|RUNNING|/other/checkout|node|00:01|01:00|N/A|None",
         ]), "")
@@ -507,6 +587,7 @@ class StatusDiscoveryTests(StatusFixture):
         ):
             activity = _status.read_activity(self.root, proc_root=self.root / "missing-proc")
         self.assertEqual([job.identifier for job in activity.executions], ["321"])
+        self.assertEqual(activity.executions[0].reason, "")
         self.assertEqual(run.call_count, 1)
         arguments = run.call_args.args[0]
         self.assertEqual(arguments[0], "squeue")
@@ -524,6 +605,8 @@ class StatusDiscoveryTests(StatusFixture):
         self.assertEqual(run.call_args.args[0][0], "squeue")
 
     def test_local_process_matching_ignores_wrappers_and_other_checkouts(self):
+        from mains._gpu import GpuUsage
+
         proc = self.root / "proc"
         proc.mkdir()
         (proc / "uptime").write_text("1000 0\n")
@@ -543,12 +626,30 @@ class StatusDiscoveryTests(StatusFixture):
             )
             fields = ["S", "1"] + ["0"] * 17 + ["100"] + ["0"] * 5
             (directory / "stat").write_text(f"{pid} (python process) " + " ".join(fields))
-        with mock.patch("mains._status.shutil.which", return_value=None):
+        with (
+            mock.patch("mains._status.shutil.which", return_value=None),
+            mock.patch("mains._status.measure_gpu", return_value=GpuUsage(1, 512 * 1024**2)) as measure,
+        ):
             activity = _status.read_activity(self.root, proc_root=proc, now=NOW)
+        measure.assert_called_once_with(41)
+        system = _status.collect_snapshot(self.root, activity=activity).systems[0]
+        self.assertEqual((system.gpu.count, system.gpu.memory_bytes), (1, 512 * 1024**2))
         self.assertEqual([job.identifier for job in activity.executions], ["PID 41"])
         self.assertEqual(activity.executions[0].system_id, "replica with spaces")
         self.assertEqual(activity.executions[0].stage, "step6.3_equilibration")
         self.assertLess(activity.executions[0].started_at, NOW)
+
+        def reused_pid(pid):
+            stat = proc / str(pid) / "stat"
+            stat.write_text(stat.read_text().replace(" 100 ", " 200 "))
+            return GpuUsage(2, 8192)
+
+        with (
+            mock.patch("mains._status.shutil.which", return_value=None),
+            mock.patch("mains._status.measure_gpu", side_effect=reused_pid),
+        ):
+            activity = _status.read_activity(self.root, proc_root=proc, now=NOW)
+        self.assertEqual(activity.executions, ())
 
     def test_unreadable_unrelated_executable_does_not_make_local_activity_unknown(self):
         proc = self.root / "proc"
@@ -574,6 +675,34 @@ class StatusDiscoveryTests(StatusFixture):
 
 
 class StatusFormattingTests(StatusFixture):
+    @staticmethod
+    def table(output):
+        return output.split("\n\n", 2)[1].splitlines()
+
+    def test_stage_progress_displays_actual_endpoints_only(self):
+        stage = self.stage("step4_equilibration")
+        for step, expected in (
+            (0, "0.0%"), (1_000, "<0.1%"), (250_000, "0.1%"),
+            (249_999_000, ">99.9%"), (250_000_000, "100.0%"),
+        ):
+            with self.subTest(step=step):
+                self.csv(stage, record(step))
+                _, row = self.table(_status.render_snapshot(self.snapshot(self.job()), width=180))
+                self.assertIn(expected, row.split())
+
+    def test_process_vram_keeps_readable_units_near_one_gib(self):
+        for size, expected in (
+            (4096, "<1 MiB"), (561_344_512, "535 MiB"),
+            (1001 * 1024**2, "1001 MiB"), (1024**3, "1 GiB"),
+        ):
+            with self.subTest(size=size):
+                job = _status.Execution(
+                    "solution", "replica_2", "PID 42", "local", "RUNNING",
+                    gpu=_status.GpuUsage(1, size),
+                )
+                _, row = self.table(_status.render_snapshot(self.snapshot(job), width=180))
+                self.assertIn(expected, row)
+
     def test_comparison_rows_precede_details_and_completed_has_no_detail_block(self):
         self.stage("step4_equilibration", complete=True)
         stage = self.stage()
@@ -581,34 +710,111 @@ class StatusFormattingTests(StatusFixture):
         self.stage("step4_equilibration", system="done", complete=True)
         self.stage(system="done", complete=True)
         output = _status.render_snapshot(self.snapshot(self.job()), width=160)
-        self.assertIn("Job/PID", output)
-        self.assertIn("Stage %", output)
-        self.assertIn("Report age", output)
+        header, running, complete = self.table(output)
+        for label in ("Job/PID", "Stage done", "Est. stage time left", "Progress file updated", "GPUs used", "VRAM used"):
+            self.assertIn(label, header)
+        self.assertIn("64.0%", running)
+        self.assertIn("100.0%", complete)
         self.assertIn("320 / 500 ns", output)
         self.assertIn("160,000,000 / 250,000,000 steps", output)
         self.assertLess(output.index("solution/done"), output.index("DETAILS"))
         self.assertEqual(output.count("solution/done"), 1)
 
-    def test_long_names_are_preserved_in_both_table_and_narrow_output(self):
-        name = "abeta42_7q4m_8bfa_replica_2_very_long_system_name"
-        self.stage("step4_equilibration", system=name)
+    def test_stage_estimate_and_file_age_have_distinct_readable_units(self):
+        self.stage("step4_equilibration", complete=True)
+        path = self.csv(self.stage(), record(233_500_000, "864"))
+        os.utime(path, (NOW - 3300, NOW - 3300))
+        _, row = self.table(_status.render_snapshot(self.snapshot(self.job()), width=165))
+        self.assertIn("~55 min", row)
+        self.assertIn("55 min ago", row)
+        _, queued = self.table(_status.render_snapshot(self.snapshot(self.job("PENDING")), width=165))
+        self.assertIn("55 min ago", queued)
+        self.assertIn("0 MiB", queued)
+        self.assertNotIn("~", queued)
+
+    def test_compact_idle_table_uses_space_for_file_age_and_replica_suffix(self):
+        name = "abeta42_7q4m_8bfa_replica_3"
+        self.stage("step4_equilibration", system=name, complete=True)
+        self.csv(self.stage(system=name, complete=True), record(250_000_000))
         snapshot = self.snapshot()
-        wide = _status.render_snapshot(snapshot, width=200)
+        header, row = self.table(_status.render_snapshot(snapshot, width=80))
+        self.assertNotIn("ns/day", header)
+        self.assertIn("28 sec ago", row)
         narrow = _status.render_snapshot(snapshot, width=55)
-        self.assertIn(name, wide)
-        self.assertIn(name, narrow)
-        self.assertIn("Stage %", narrow)
-        self.assertNotIn("Job/PID  State", narrow)
+        self.assertIn("replica_3", self.table(narrow)[1])
+        self.assertIn("production", narrow.lower())
+
+    def test_long_and_colliding_names_stay_comparable_and_resolve_to_full_identities(self):
+        names = [
+            "abeta42_7q4m_8bfa_long_common_prefix_" + middle + "_long_common_suffix_replica_2"
+            for middle in ("first", "second")
+        ]
+        for name in names:
+            self.stage("step4_equilibration", system=name, complete=True)
+            self.stage(system=name, complete=True)
+        snapshot = self.snapshot()
+        for width in (55, 80):
+            with self.subTest(width=width):
+                output = _status.render_snapshot(snapshot, width=width)
+                table = self.table(output)
+                self.assertEqual(len(table), 3, table)
+                header, first, second = table
+                self.assertTrue(all(len(line) <= width for line in (header, first, second)))
+                for column in ("State", "Done", "GPUs", "VRAM"):
+                    self.assertIn(column, header)
+                state_at = header.index("State")
+                aliases = []
+                for row, name in zip((first, second), names):
+                    self.assertEqual(row.index("COMPLETE"), state_at)
+                    self.assertIn("100.0%", row)
+                    alias = row[:state_at].strip()
+                    self.assertIn("ab", alias)
+                    self.assertTrue(alias.endswith("_2"), alias)
+                    aliases.append(alias)
+                    self.assertIn("solution/" + name, output.partition("DETAILS")[2])
+                self.assertNotEqual(*aliases)
+
+    def test_very_narrow_table_uses_row_ids_and_keeps_known_values_in_details(self):
+        self.stage("step4_equilibration", complete=True)
+        self.csv(self.stage(), record(160_000_000, "13.4"))
+        output = _status.render_snapshot(self.snapshot(self.job()), width=16)
+        table = self.table(output)
+        self.assertEqual(len(table), 2, table)
+        header, row = table
+        self.assertTrue(header.startswith(("#", "ID")), header)
+        self.assertLessEqual(max(len(header), len(row)), 16)
+        self.assertIn("solution/replica_2", output.partition("DETAILS")[2])
+        self.assertIn("64.0%", output)
+        self.assertIn("13.4", output)
+        self.assertIn("28 sec ago", output)
+
+    def test_live_slurm_timing_and_wait_reason_appear_only_where_they_apply(self):
+        self.stage("step4_equilibration", complete=True)
+        self.csv(self.stage(), record(160_000_000))
+        running = self.job(node="nvdfen1", reason="nvdfen1", elapsed="1-02:00:00", remaining="5-22:00:00")
+        output = _status.render_snapshot(self.snapshot(running), width=165)
+        self.assertEqual(output.count("nvdfen1"), 1)
+        self.assertIn("elapsed 1-02:00:00", output.lower())
+        self.assertIn("allocation left 5-22:00:00", output.lower())
+        self.assertNotIn("Job 321", output.partition("DETAILS")[2])
+        self.assertNotIn("before retrying", output)
+        self.assertIn("replica_2-321.log", output)
+        queued = self.job("PENDING", reason="(Resources)", elapsed="00:00", remaining="7-00:00:00")
+        waiting = _status.render_snapshot(self.snapshot(queued), width=165)
+        self.assertIn("Resources", waiting)
+        self.assertNotIn("7-00:00:00", waiting)
 
     def test_plain_output_has_no_escape_codes_and_colour_does_not_change_alignment(self):
         self.stage("step4_equilibration")
         snapshot = self.snapshot(self.job())
-        plain = _status.render_snapshot(snapshot, width=160)
-        coloured = _status.render_snapshot(snapshot, width=160, color=True)
-        self.assertNotIn("\x1b", plain)
-        self.assertIn("\x1b[", coloured)
         import re
-        self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", coloured), plain)
+        for width in (16, 55, 80, 160):
+            with self.subTest(width=width):
+                plain = _status.render_snapshot(snapshot, width=width)
+                coloured = _status.render_snapshot(snapshot, width=width, color=True)
+                self.assertNotIn("\x1b", plain)
+                self.assertIn("\x1b[", coloured)
+                self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", coloured), plain)
 
 
 class StatusCliTests(unittest.TestCase):
@@ -640,7 +846,7 @@ class StatusCliTests(unittest.TestCase):
         self.assertNotIn("\x1b", result.stdout + result.stderr)
 
     def test_cli_and_helpers_parse_as_python_38(self):
-        for name in ("status.py", "_status.py", "_console.py"):
+        for name in ("status.py", "_status.py", "_status_table.py", "_console.py", "_gpu.py", "_gpu_monitor.py"):
             with self.subTest(name=name):
                 ast.parse((PROJECT / "mains" / name).read_text(), feature_version=(3, 8))
 

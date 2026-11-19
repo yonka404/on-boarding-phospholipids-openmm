@@ -38,15 +38,12 @@ class SweepRunner:
         for step_name in self.profile.protocol_schedule.stage_names:
             artifacts = StageArtifacts.for_stage(outputs_dir, step_name)
             if artifacts.is_complete and not artifacts.checkpoint_path.is_file():
-                logger.info(
-                    "Skipping completed stage %s; final state and coordinates exist",
-                    step_name,
-                )
+                logger.info("Skipping completed stage %s", step_name)
                 continue
 
-            logger.info("Running %s", step_name)
             self.stage_runner.run(
                 inputs_dir=inputs_dir,
                 outputs_dir=outputs_dir,
                 step_name=step_name,
             )
+        logger.info("Protocol complete · %d stages", len(self.profile.protocol_schedule.stage_names))

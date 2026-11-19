@@ -11,12 +11,20 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 from mains._common import system_id_argument
-from mains._console import clean_text, paint
+from mains._gpu import GpuUsage, measure_gpu
+from mains._gpu_monitor import read_job_usage
+from mains._status_table import render_snapshot
+
+__all__ = [
+    "STAGES", "Activity", "Execution", "Report", "Snapshot", "StageProgress", "SystemStatus",
+    "collect_snapshot", "read_activity", "read_report", "render_snapshot",
+]
 
 # These mirror the public profiles without importing the simulation package.
 STAGES = {
@@ -45,6 +53,7 @@ class Execution:
     elapsed: str = ""
     remaining: str = ""
     reason: str = ""
+    gpu: GpuUsage = field(default_factory=GpuUsage)
 
     @property
     def status(self) -> str:
@@ -70,7 +79,7 @@ class Report:
     modified: float | None = None
     problem: str | None = None
     unreadable: bool = False
-    speed_step: int | None = None
+    speed_record: tuple[int, bytes] | None = None
 
 
 @dataclass(frozen=True)
@@ -86,7 +95,7 @@ class StageProgress:
     reported_at: float | None = None
     notes: tuple[str, ...] = ()
     unreadable: bool = False
-    speed_step: int | None = None
+    speed_record: tuple[int, bytes] | None = None
 
     @property
     def percent(self) -> float | None:
@@ -115,6 +124,7 @@ class SystemStatus:
     executions: tuple[Execution, ...] = ()
     notes: tuple[str, ...] = ()
     log_path: Path | None = None
+    gpu: GpuUsage = field(default_factory=GpuUsage)
 
     @property
     def name(self) -> str:
@@ -125,14 +135,18 @@ class SystemStatus:
         return self.stages[self.stage_index]
 
     @property
-    def eta_seconds(self) -> float | None:
-        stage = self.current_stage
-        if self.state != "RUNNING" or sum(job.active for job in self.executions) != 1 or not stage.speed:
+    def speed(self) -> float | None:
+        if self.state != "RUNNING" or sum(job.active for job in self.executions) != 1:
             return None
-        if stage.simulated_ns is None or stage.target_ns is None:
+        return self.current_stage.speed
+
+    @property
+    def eta_seconds(self) -> float | None:
+        stage, speed = self.current_stage, self.speed
+        if not speed or stage.simulated_ns is None or stage.target_ns is None:
             return None
         remaining = stage.target_ns - stage.simulated_ns
-        estimate = max(0.0, remaining) / stage.speed * 86400
+        estimate = max(0.0, remaining) / speed * 86400
         return estimate if math.isfinite(estimate) else None
 
 
@@ -158,7 +172,8 @@ def _csv_record(line: bytes, columns: list[str]) -> tuple[int, float | None, boo
         if speed_value == "--":
             return step, None, True  # OpenMM's first report after reporter startup.
         speed = float(speed_value)
-        return step, speed if math.isfinite(speed) and speed > 0 else None, False
+        # OpenMM 8.3.1 also writes zero on startup when wall time advanced but MD time did not.
+        return step, speed if math.isfinite(speed) and speed > 0 else None, speed == 0
     except (ValueError, UnicodeError, csv.Error, StopIteration):
         return None
 
@@ -181,7 +196,8 @@ def read_report(path: Path) -> Report:
                 stream.seek(start)
                 tail = stream.read(_READ_LIMIT)
                 if start > len(header):
-                    tail = tail.partition(b"\n")[2]
+                    partial, newline, tail = tail.partition(b"\n")
+                    start += len(partial) + len(newline)
                 current = path.stat()
                 if (stat.st_ino, stat.st_dev) != (current.st_ino, current.st_dev):
                     if attempt == 0:
@@ -189,8 +205,12 @@ def read_report(path: Path) -> Report:
                     return Report(problem="Report replaced during snapshot; run status again")
                 latest_step = None
                 speed = None
-                speed_step = None
-                for line in reversed(tail.split(b"\n")[:-1]):
+                speed_record = None
+                lines = tail.split(b"\n")
+                # Drop a potentially incomplete last line and walk the byte offsets backward.
+                offset = start + len(tail) - len(lines[-1])
+                for line in reversed(lines[:-1]):
+                    offset -= len(line) + 1
                     parsed = _csv_record(line.rstrip(b"\r"), columns)
                     if parsed is None:
                         continue
@@ -199,11 +219,11 @@ def read_report(path: Path) -> Report:
                         latest_step = step
                     if speed is None and step <= latest_step and candidate_speed is not None:
                         speed = candidate_speed
-                        speed_step = step
+                        speed_record = (offset, line + b"\n")
                     if speed is not None or startup:
                         break
                 problem = "No complete valid simulation record in the report tail" if latest_step is None else None
-                return Report(latest_step, speed, stat.st_mtime, problem, speed_step=speed_step)
+                return Report(latest_step, speed, stat.st_mtime, problem, speed_record=speed_record)
         except FileNotFoundError:
             if attempt == 0 and path.parent.is_dir():
                 continue
@@ -220,26 +240,52 @@ def _start_time(value: str) -> float | None:
         return None
 
 
-def _script_arguments(argv: list[str], cwd: Path, script: Path) -> list[str] | None:
+def _debugpy_target(argv: list[str], index: int) -> int | None:
+    """Find the debugger's script target without searching its arguments."""
+    has_endpoint = False
+    while index < len(argv):
+        option = argv[index]
+        if not option.startswith("-"):
+            return index if has_endpoint else None
+        if option in {"--connect", "--listen"}:
+            has_endpoint = True
+            index += 2
+        elif option in {"--adapter-access-token", "--parent-session-pid", "--log-to"} or option.startswith("--configure-"):
+            index += 2
+        elif option in {"--wait-for-client", "--log-to-stderr", "--disable-sys-remote-exec"}:
+            index += 1
+        else:
+            return None
+    return None
+
+
+def _script_arguments(argv: list[str], cwd: Path, script: Path, *, allow_debugpy: bool = False) -> list[str] | None:
     index = 1
     while index < len(argv) and argv[index].startswith("-"):
         if argv[index] in {"-c", "-m", "--help", "--version"}:
-            return None
+            break
         if argv[index] in {"-W", "-X"}:
             index += 1
         index += 1
-    if index >= len(argv) or (cwd / argv[index]).resolve() != script:
+    if index >= len(argv):
         return None
-    return argv[index + 1:]
+    target: int | None = index
+    if allow_debugpy and argv[index:index + 2] == ["-m", "debugpy"]:
+        target = _debugpy_target(argv, index + 2)
+    elif allow_debugpy and Path(argv[index]).name == "debugpy":
+        target = _debugpy_target(argv, index + 1)
+    if target is None or argv[target].startswith("-") or (cwd / argv[target]).resolve() != script:
+        return None
+    return argv[target + 1:]
 
 
 class _ProcessArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise ValueError(message)
 
 
 def _local_arguments(argv: list[str], cwd: Path, root: Path) -> tuple[str, str, str | None] | None:
-    args = _script_arguments(argv, cwd, root / "mains/local.py")
+    args = _script_arguments(argv, cwd, root / "mains/local.py", allow_debugpy=True)
     if args is None:
         return None
     parser = _ProcessArgumentParser(add_help=False)
@@ -271,6 +317,9 @@ def _local_processes(root: Path, proc: Path, now: float) -> tuple[list[Execution
         try:
             if directory.stat().st_uid != owner:
                 continue
+            before = (directory / "stat").read_text().rsplit(")", 1)[1].split()
+            if before[0] in {"Z", "X"}:
+                continue
             with (directory / "cmdline").open("rb") as stream:
                 argv = [os.fsdecode(arg) for arg in stream.read(_READ_LIMIT).split(b"\0") if arg]
             if not argv or not Path(argv[0]).name.lower().startswith(("python", "pypy")):
@@ -278,12 +327,13 @@ def _local_processes(root: Path, proc: Path, now: float) -> tuple[list[Execution
             executable = (directory / "exe").resolve(strict=True).name.lower()
             if not executable.startswith(("python", "pypy")):
                 continue
-            before = (directory / "stat").read_text().rsplit(")", 1)[1].split()
-            if before[0] in {"Z", "X"}:
-                continue
             arguments = _local_arguments(argv, (directory / "cwd").resolve(strict=True), root)
+            if arguments is None:
+                continue
+            # The process must retain its identity across both argv and GPU accounting reads.
+            gpu = measure_gpu(int(directory.name))
             after = (directory / "stat").read_text().rsplit(")", 1)[1].split()
-            if arguments is None or before[19] != after[19]:
+            if before[19] != after[19] or after[0] in {"Z", "X"}:
                 continue
             kind, system_id, stage = arguments
             source = "local"
@@ -298,7 +348,7 @@ def _local_processes(root: Path, proc: Path, now: float) -> tuple[list[Execution
             executions.append(Execution(
                 kind, system_id, f"PID {directory.name}", source,
                 "SUSPENDED" if after[0] in {"T", "t"} else "RUNNING",
-                stage=stage, started_at=now - uptime + int(after[19]) / ticks,
+                stage=stage, started_at=now - uptime + int(after[19]) / ticks, gpu=gpu,
             ))
         except (FileNotFoundError, ProcessLookupError):
             continue  # Processes routinely exit while /proc is being read.
@@ -321,7 +371,7 @@ def read_activity(project_root: Path, *, proc_root: Path = Path("/proc"), now: f
             except (ImportError, AttributeError):
                 user = getpass.getuser()
             result = subprocess.run(
-                ["squeue", "--local", "-h", "-u", user, "-t", "all", "-o", "%i|%j|%T|%Z|%N|%M|%L|%S|%R"],
+                ["squeue", "--local", "-h", "-u", user, "-t", "all", "-o", "%i|%j|%T|%Z|%N|%M|%L|%S|%r"],
                 capture_output=True, text=True, timeout=5, check=False,
             )
             if result.returncode:
@@ -343,7 +393,8 @@ def read_activity(project_root: Path, *, proc_root: Path = Path("/proc"), now: f
                     jobs.append(Execution(
                         "solution", system_id, job_id, "slurm", state,
                         started_at=_start_time(start), node=node, elapsed=elapsed,
-                        remaining=remaining, reason=reason if reason not in {"None", "(null)", "N/A"} else "",
+                        remaining=remaining,
+                        reason=reason if _STATES.get(state, state) == "QUEUED" and reason not in {"None", "(null)", "N/A"} else "",
                     ))
         except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
             slurm_error = f"Slurm unavailable: {exc}"
@@ -389,17 +440,16 @@ def _stage_progress(root: Path, kind: str, system_id: str, name: str) -> StagePr
             report = replace(report, step=None, speed=None)
         if exists and not complete and not checkpoint:
             notes.append("Incomplete stage has no checkpoint; inspect outputs before retrying")
-        return StageProgress(name, exists, complete, checkpoint, report.step, target, timestep, report.speed, report.modified, tuple(notes), report.unreadable, speed_step=report.speed_step)
+        return StageProgress(name, exists, complete, checkpoint, report.step, target, timestep, report.speed, report.modified, tuple(notes), report.unreadable, speed_record=report.speed_record)
     except OSError as exc:
         return StageProgress(name, exists=True, notes=(f"Cannot read stage outputs: {exc}",), unreadable=True)
 
 
-def _retained_recovery_speed(stage_dir: Path, started: float | None, speed_step: int | None) -> str | None:
+def _retained_recovery_speed(stage_dir: Path, started: float, speed_record: tuple[int, bytes] | None) -> str | None:
     """A repaired CSV has a new mtime even though its retained rows are old.
 
-    Recovery preserves an original CSV in a newly created recovery-* directory.
-    Until a speed-bearing step exceeds that original tail, attribution to the
-    new execution is uncertain. Both current and backup CSV reads stay bounded.
+    Recovery copies the retained prefix byte for byte. A change at the speed
+    record's offset is evidence of new output, even while replaying saved steps.
     """
     try:
         backups = []
@@ -407,18 +457,36 @@ def _retained_recovery_speed(stage_dir: Path, started: float | None, speed_step:
             if not directory.name.startswith("recovery-") or directory.is_symlink() or not directory.is_dir():
                 continue
             modified = directory.stat().st_mtime
-            if started is not None and modified < started:
+            if modified < started:
                 continue
             saved = directory / "state_data.csv"
             if saved.exists() or saved.is_symlink():
                 backups.append((modified, str(directory), saved))
         if backups:
-            original = read_report(max(backups)[2])
-            if original.step is None or speed_step is None or speed_step <= original.step:
-                return "Retained recovery progress; speed/ETA wait for measurements beyond the pre-recovery report"
+            saved = max(backups)[2]
+            if saved.is_symlink() or not saved.is_file() or speed_record is None:
+                return "Recovery history unreadable. Cannot confirm the current speed."
+            offset, row = speed_record
+            with saved.open("rb") as original:
+                original.seek(offset)
+                if original.read(len(row)) == row:
+                    return "Retained recovery progress. Waiting for a new speed measurement."
     except OSError:
-        return "Recovery history unreadable; current speed/ETA cannot be confirmed"
+        return "Recovery history unreadable. Cannot confirm the current speed."
     return None
+
+
+def _system_gpu(active: tuple[Execution, ...], logs: Path, now: float | None) -> GpuUsage:
+    if len(active) != 1:
+        return GpuUsage()
+    job = active[0]
+    if job.status == "QUEUED":
+        return GpuUsage(0, 0)
+    if job.status == "REQUEUED":
+        return GpuUsage(problem="Waiting for the next allocation after requeue.")
+    if job.source == "slurm":
+        return read_job_usage(logs, job.system_id, job.identifier, job.started_at, now)
+    return job.gpu
 
 
 def collect_snapshot(project_root: Path, *, now: float | None = None, activity: Activity | None = None) -> Snapshot:
@@ -428,7 +496,7 @@ def collect_snapshot(project_root: Path, *, now: float | None = None, activity: 
         activity = read_activity(root, now=timestamp)
     systems = {(job.kind, job.system_id) for job in activity.executions}
     notices = [error for error in (activity.slurm_error, activity.local_error) if error]
-    logs = {}
+    logs: dict[tuple[str, str], tuple[int, Path]] = {}
     for kind in STAGES:
         directory = root / "data/outputs/openmm_native" / kind
         try:
@@ -480,13 +548,19 @@ def collect_snapshot(project_root: Path, *, now: float | None = None, activity: 
             if selected:
                 stage = replace(stage, complete=False)
             if started is not None and stage.reported_at is not None and stage.reported_at < started:
-                stage = replace(stage, complete=False, steps=None, speed=None, speed_step=None, reported_at=None, notes=stage.notes + ("Existing report predates this execution; waiting for a new simulation report",))
+                stage = replace(stage, complete=False, steps=None, speed=None, speed_record=None, reported_at=None, notes=stage.notes + ("Existing report predates this execution; waiting for a new simulation report",))
             elif selected and stage.steps is None:
                 stage = replace(stage, notes=stage.notes + ("No simulation report yet for this single-stage execution",))
-            if stage.speed is not None:
-                retained = _retained_recovery_speed(output / stage.name, started, stage.speed_step)
-                if retained:
-                    stage = replace(stage, speed=None, speed_step=None, notes=stage.notes + (retained,))
+            if len(active) == 1 and state == "RUNNING" and stage.steps is not None:
+                speed_problem: str | None
+                if stage.speed is None:
+                    speed_problem = "Waiting for a speed measurement in the progress file."
+                elif started is None:
+                    speed_problem = "Job start time unavailable. Cannot confirm when this speed was measured."
+                else:
+                    speed_problem = _retained_recovery_speed(output / stage.name, started, stage.speed_record)
+                if speed_problem:
+                    stage = replace(stage, speed=None, speed_record=None, notes=stage.notes + (speed_problem,))
             stages = stages[:index] + (stage,) + stages[index + 1:]
             if len(active) > 1:
                 notes.append("Multiple active executions share these outputs; measurements cannot be attributed to one run")
@@ -504,108 +578,14 @@ def collect_snapshot(project_root: Path, *, now: float | None = None, activity: 
             if not job.active:
                 notes.append(f"Slurm last reports {job.state} for job {job.identifier}")
         notes.extend(stages[index].notes if state != "COMPLETE" else ())
-        log_path = next((root / "mains/logs" / f"{system_id}-{job.identifier}.log" for job in active if job.source == "slurm"), None)
-        if log_path is None and (kind, system_id) in logs:
+        log_path = None
+        if len(active) == 1 and active[0].source == "slurm":
+            log_path = root / "mains/logs" / f"{system_id}-{active[0].identifier}.log"
+        elif not active and (kind, system_id) in logs:
             log_path = logs[(kind, system_id)][1]
-        results.append(SystemStatus(kind, system_id, state, index, stages, executions, tuple(dict.fromkeys(notes)), log_path))
+        results.append(SystemStatus(
+            kind, system_id, state, index, stages, executions, tuple(dict.fromkeys(notes)), log_path,
+            gpu=_system_gpu(active, root / "mains/logs", now),
+        ))
     results.sort(key=lambda system: (0 if any(job.active for job in system.executions) else 2 if system.state == "COMPLETE" else 1, system.kind, system.system_id))
     return Snapshot(timestamp, tuple(results), tuple(notices))
-
-
-def _duration(seconds: float | None) -> str:
-    if seconds is None or not math.isfinite(seconds):
-        return "-"
-    seconds = max(0, int(seconds))
-    days, seconds = divmod(seconds, 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-    if days:
-        return f"{days}d {hours:02}h"
-    if hours:
-        return f"{hours}h {minutes:02}m"
-    return f"{minutes}m {seconds:02}s" if minutes else f"{seconds}s"
-
-
-def _cell(value: object) -> str:
-    return clean_text(value).replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-
-
-def _state_tone(state: str) -> str:
-    return "green" if state in {"RUNNING", "COMPLETE"} else "cyan" if state in {"QUEUED", "STARTING", "FINISHING"} else "yellow"
-
-
-def render_snapshot(snapshot: Snapshot, *, width: int = 120, color: bool = False) -> str:
-    lines = [paint("SIMULATIONS", "cyan", color) + " · snapshot at " + datetime.fromtimestamp(snapshot.timestamp).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")]
-    if not snapshot.systems:
-        lines.extend(["No simulations found in this checkout.", *(_cell(note) for note in snapshot.notices)])
-        return "\n".join(lines) + "\n"
-    counts = {}
-    for system in snapshot.systems:
-        label = "completed" if system.state == "COMPLETE" else system.state.lower()
-        counts[label] = counts.get(label, 0) + 1
-    lines.extend([" · ".join(f"{count} {state}" for state, count in counts.items()), ""])
-    headers = ["System", "Job/PID", "State", "Stage", "Stage %", "ns/day", "Stage ETA", "Report age"]
-    rows = []
-    for system in snapshot.systems:
-        stage = system.current_stage
-        label = "Production" if stage.name.endswith("production") else "Equilibration"
-        identifiers = ", ".join(job.identifier for job in system.executions if job.active) or "-"
-        speed = stage.speed if system.state == "RUNNING" else None
-        rows.append(list(map(_cell, [
-            system.name, identifiers, system.state, f"{system.stage_index + 1}/{len(system.stages)} {label}",
-            "-" if stage.percent is None else f"{stage.percent:.1f}%",
-            "-" if speed is None else f"{speed:.3g}",
-            "-" if system.eta_seconds is None else "~" + _duration(system.eta_seconds),
-            _duration(snapshot.timestamp - stage.reported_at) if stage.reported_at is not None and stage.steps is not None else "-",
-        ])))
-    widths = [max(len(header), *(len(row[index]) for row in rows)) for index, header in enumerate(headers)]
-    if sum(widths) + 2 * (len(headers) - 1) <= width:
-        def table_row(row: list[str], state: str | None = None) -> str:
-            cells = [value.rjust(widths[i]) if i in {4, 5} else value.ljust(widths[i]) for i, value in enumerate(row)]
-            if state:
-                cells[2] = paint(cells[2], _state_tone(state), color)
-            return "  ".join(cells).rstrip()
-        lines.append(table_row(headers))
-        lines.extend(table_row(row, system.state) for row, system in zip(rows, snapshot.systems))
-    else:
-        for row, system in zip(rows, snapshot.systems):
-            lines.append(paint(row[0], "bold", color))
-            for header, value in zip(headers[1:], row[1:]):
-                lines.append(f"  {header:<11} " + (paint(value, _state_tone(system.state), color) if header == "State" else value))
-            lines.append("")
-    lines.extend(["", "Progress is last reported for the shown stage; ETA covers that stage only."])
-    for notice in snapshot.notices:
-        lines.append(paint("Notice: " + _cell(notice), "yellow", color))
-    detailed = [system for system in snapshot.systems if system.state != "COMPLETE"]
-    if detailed:
-        lines.extend(["", paint("DETAILS", "cyan", color)])
-    for system in detailed:
-        stage = system.current_stage
-        lines.append(_cell(system.name))
-        progress = stage.name
-        if stage.simulated_ns is not None and stage.target_ns is not None:
-            progress += f" · {stage.simulated_ns:,.6g} / {stage.target_ns:,.6g} ns"
-        if stage.steps is not None and stage.target_steps is not None:
-            progress += f" · {stage.steps:,} / {stage.target_steps:,} steps"
-        lines.append("  " + progress)
-        lines.append(f"  Stages complete: {sum(stage.complete for stage in system.stages)}/{len(system.stages)}")
-        for job in system.executions:
-            if job.source == "slurm" and job.active:
-                timing = [f"Job {job.identifier}"]
-                if job.node and job.node not in {"(null)", "None", "N/A"}:
-                    timing.append(f"node {job.node}")
-                if job.status != "QUEUED":
-                    timing.extend(f"{label} {value}" for label, value in (("elapsed", job.elapsed), ("allocation left", job.remaining)) if value)
-                lines.append("  " + _cell(" · ".join(timing)))
-                if job.reason:
-                    lines.append("  Queue/reason: " + _cell(job.reason))
-        for note in system.notes:
-            lines.append("  " + _cell(note))
-        if stage.checkpoint:
-            lines.append("  Checkpoint present; recovery still requires runtime validation.")
-        if stage.steps is not None and stage.speed is None and system.state == "RUNNING":
-            lines.append("  Speed/ETA unavailable: no finite positive speed in the report tail.")
-        if system.log_path:
-            lines.append("  Log: " + _cell(system.log_path))
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"

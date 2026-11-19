@@ -262,9 +262,7 @@ def reconcile_reporters(
         return
 
     backup = Path(tempfile.mkdtemp(prefix="recovery-", dir=artifacts.output_dir))
-    logger.info(
-        "[%s] Preparing reporter recovery backups in %s", protocol.step_name, backup
-    )
+    logger.info("Backing up reporter files before repair · %s", backup)
     # All backups must be durable before *either* original is replaced.
     for prefix in affected:
         saved = backup / prefix.path.name
@@ -278,9 +276,7 @@ def reconcile_reporters(
     for prefix in affected:
         os.replace(backup / (prefix.path.name + ".replacement"), prefix.path)
         _sync_directory(artifacts.output_dir)
-    logger.info(
-        "[%s] Reporter files reconciled through checkpoint step %d; originals saved in %s",
-        protocol.step_name,
-        checkpoint_step,
-        backup,
+    logger.debug(
+        "[%s] Reporter files reconciled through checkpoint step %d",
+        protocol.step_name, checkpoint_step,
     )

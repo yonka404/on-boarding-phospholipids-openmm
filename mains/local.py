@@ -1,6 +1,8 @@
 """Run a membrane or solution protocol directly, or select one stage with --stage."""
 
 import argparse
+import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -8,8 +10,11 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mains._common import system_id_argument, system_paths
+from mains._common import PROJECT_ROOT, system_id_argument, system_paths
 from mains._console import configure_logging
+from mains._gpu_monitor import monitor_gpu
+
+logger = logging.getLogger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -31,14 +36,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
     inputs_dir, outputs_dir = system_paths(args.environment, args.system_id)
-    if args.stage is None:
-        workflow.run_protocol_sweep(inputs_dir=inputs_dir, outputs_dir=outputs_dir)
-    else:
-        workflow.run_single_step(
-            inputs_dir=inputs_dir,
-            outputs_dir=outputs_dir,
-            step_name=args.stage,
-        )
+    logger.info(
+        "OpenMM · %s/%s · %s · PID %d", args.environment, args.system_id,
+        "full protocol" if args.stage is None else "single stage", os.getpid(),
+    )
+    with monitor_gpu(PROJECT_ROOT / "mains/logs", args.environment, args.system_id):
+        if args.stage is None:
+            workflow.run_protocol_sweep(inputs_dir=inputs_dir, outputs_dir=outputs_dir)
+        else:
+            workflow.run_single_step(
+                inputs_dir=inputs_dir,
+                outputs_dir=outputs_dir,
+                step_name=args.stage,
+            )
 
 
 if __name__ == "__main__":

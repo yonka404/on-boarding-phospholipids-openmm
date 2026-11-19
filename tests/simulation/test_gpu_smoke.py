@@ -1,5 +1,6 @@
 """Opt-in five-step GPU check: OPENMM_GPU_SMOKE=1 OPENMM_PLATFORM=OpenCL (or CUDA)."""
 
+import locale
 import math
 import os
 import unittest
@@ -13,6 +14,8 @@ from charmm_gui_md.shared.simulation import OpenMMSimulationFactory
 @unittest.skipUnless(os.environ.get("OPENMM_GPU_SMOKE") == "1", "opt-in GPU smoke test")
 class GPUSmokeTests(unittest.TestCase):
     def test_requested_gpu_runs_periodic_pme(self) -> None:
+        # ROCm can reset the process locale during initialization. Later tests read UTF-8 logs.
+        self.addCleanup(locale.setlocale, locale.LC_ALL, locale.setlocale(locale.LC_ALL))
         requested = os.environ.get("OPENMM_PLATFORM")
         self.assertIn(requested, ("OpenCL", "CUDA"), "Set OPENMM_PLATFORM to a GPU backend")
         topology = Topology()

@@ -71,7 +71,7 @@ class ConsoleFormatter(logging.Formatter):
             tone = "red" if record.levelno >= logging.ERROR else "yellow" if record.levelno >= logging.WARNING else "cyan"
             label = f"[{record.levelname}]"
             message = message.replace(label, paint(label, tone, True), 1)
-        return message
+        return "\n" + message if getattr(record, "section", False) else message
 
 
 def configure_logging(*, timestamps: bool = True) -> None:

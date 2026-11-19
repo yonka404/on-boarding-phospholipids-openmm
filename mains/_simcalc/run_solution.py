@@ -67,7 +67,7 @@ def run_job(system_id: str, mode: str = "fresh", checkpoint_stage: str | None = 
             raise LauncherError(
                 f"Node has {libc!r}; OpenMM requires glibc 2.28+. Ask SIMCALC support about this node."
             )
-        logger.info("Node runtime: %s; CUDA required", libc)
+        logger.info("Node runtime · %s", libc)
 
         # Leave CUDA_VISIBLE_DEVICES intact. Device 0 is Slurm's first visible GPU.
         os.environ["OPENMM_PLATFORM"] = "CUDA"
@@ -87,7 +87,10 @@ def run_job(system_id: str, mode: str = "fresh", checkpoint_stage: str | None = 
             "Solution sweep failed",
             check=False,
         )
-        return result.returncode if result.returncode >= 0 else 128 - result.returncode
+        status = result.returncode if result.returncode >= 0 else 128 - result.returncode
+        if status:
+            logger.error("Simulation exited with status %d", status)
+        return status
 
 
 def main(argv: Sequence[str] | None = None) -> int:

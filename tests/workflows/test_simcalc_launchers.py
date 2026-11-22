@@ -389,7 +389,7 @@ elif name == "python":
         self.assertIn("1 GPU", result.stdout)
         self.assertIn("4 CPU cores", result.stdout)
         self.assertIn("16 GiB", result.stdout)
-        self.assertIn("7 days", result.stdout)
+        self.assertIn("8 days", result.stdout)
         self.assertIn("python3 mains/status.py", result.stdout)
         self.assertNotIn("GPU node availability", result.stdout)
         self.assertNotIn("GiB available /", result.stdout)
@@ -665,7 +665,7 @@ elif name == "python":
         for old, new in (
             ("--mem=16G", "--mem=80G"),
             ("--cpus-per-task=4", "--cpus-per-task=64"),
-            ("--time=7-00:00:00", "--time=9-00:00:00"),
+            ("--time=8-00:00:00", "--time=9-00:00:00"),
         ):
             with self.subTest(request=new):
                 batch.write_text(original.replace(old, new))

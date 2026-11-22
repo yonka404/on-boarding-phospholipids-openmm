@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
-# Seven days of elapsed time; %j becomes the job number.
-#SBATCH --time=7-00:00:00
+# Eight days of elapsed time. Slurm replaces %j with the job number.
+#SBATCH --time=8-00:00:00
 #SBATCH --output=solution-md-%j.log
 
 set -eo pipefail

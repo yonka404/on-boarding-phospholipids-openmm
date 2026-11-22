@@ -83,7 +83,7 @@ cluster launch logic. Its documented policies and commands include:
 
 For this project, submit through `mains/simcalc.py` so prerequisite checks run
 before `sbatch`. The batch file requests one GPU, four CPU cores, 16 GB RAM, and
-seven days. Keep submission and node-bootstrap imports standard-library-only
+eight days. Keep submission and node-bootstrap imports standard-library-only
 and compatible with system Python 3.8+. Use system `python3` on the login node,
 not `uv run` or the project environment. After allocation and the glibc 2.28+ check,
 the node runner uses `.venv/bin/python` (Python >=3.12.10,<3.13) for validation and MD.

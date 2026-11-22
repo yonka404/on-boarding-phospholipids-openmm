@@ -310,7 +310,7 @@ enough space for the whole run or recovery backups. Slurm's start-time predictio
 missing estimate produces a warning, then actual submission determines acceptance.
 
 Slurm chooses a GPU node with one GPU, four CPU cores, 16 GB of system RAM, and
-up to seven days of elapsed time. Busy nodes remain eligible: the job queues
+up to eight days of elapsed time. Busy nodes remain eligible: the job queues
 normally, and an unavailable start estimate is not a submission failure. Nodes
 marked down, drained, failed, unknown, or under maintenance are excluded from
 the early capacity check. The job continues after you disconnect. Slurm stores
